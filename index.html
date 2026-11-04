@@ -8,11 +8,18 @@
     <script>
       try {
         const theme = localStorage.getItem("bob-baixa-theme")
+        const glassFamily = localStorage.getItem("bob-baixa-glass") === "1"
+        const systemDark = matchMedia("(prefers-color-scheme: dark)").matches
         const dark =
           theme === "dark" ||
-          ((theme === null || theme === "system") &&
-            matchMedia("(prefers-color-scheme: dark)").matches)
+          theme === "glass-dark" ||
+          ((theme === null || theme === "system") && systemDark)
+        const glass =
+          theme === "glass-light" ||
+          theme === "glass-dark" ||
+          ((theme === null || theme === "system") && glassFamily)
         if (dark) document.documentElement.classList.add("dark")
+        if (glass) document.documentElement.classList.add("glass")
         document.documentElement.style.colorScheme = dark ? "dark" : "light"
       } catch (e) {}
     </script>
