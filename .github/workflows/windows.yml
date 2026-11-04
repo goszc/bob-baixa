@@ -26,7 +26,10 @@ jobs:
         run: npm run tauri build -- --no-bundle
       - name: installer
         working-directory: packaging
-        run: makensis /DEXE=..\target\release\bob-baixa.exe /DEXTDIR=..\extension /DICON=..\src-tauri\icons\icon.ico bob-baixa.nsi
+        shell: pwsh
+        run: |
+          $env:Path = "${env:ProgramFiles(x86)}\NSIS;" + $env:Path
+          makensis /DEXE=..\target\release\bob-baixa.exe /DEXTDIR=..\extension /DICON=..\src-tauri\icons\icon.ico bob-baixa.nsi
       - name: sign and write the update manifest
         shell: bash
         env:
