@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "bob baixa",
+  "version": "1.0.0",
+  "description": "botão baixar com bob baixa nas páginas do youtube",
+  "permissions": ["tabs"],
+  "host_permissions": ["http://127.0.0.1:47821/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/*", "*://youtube.com/*", "*://m.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "bob baixa",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "32": "icon32.png"
+    }
+  },
+  "icons": {
+    "32": "icon32.png",
+    "128": "icon128.png"
+  }
+}

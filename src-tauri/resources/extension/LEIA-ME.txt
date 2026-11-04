@@ -1,0 +1,10 @@
+bob baixa — extensão do chrome e do edge
+
+1. abra chrome://extensions ou edge://extensions
+2. ative o modo do desenvolvedor
+3. clique em carregar sem compactação
+4. escolha esta pasta extension
+
+na página de um vídeo do youtube aparece o botão "baixar com bob baixa".
+o app precisa estar aberto. ele escuta em http://127.0.0.1:47821
+e também no protocolo bobbaixa://
