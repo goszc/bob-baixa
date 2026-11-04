@@ -343,6 +343,7 @@ name = "bob-baixa"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "bob-core",
  "chrono",
  "dirs 6.0.0",

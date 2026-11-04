@@ -37,6 +37,7 @@ arboard = "3"
 tiny_http = "0.12"
 window-vibrancy = "0.6"
 minisign-verify = "0.3"
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

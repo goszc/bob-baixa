@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use base64::Engine;
+
 use bob_core::{text, BobEvent, Config};
 use minisign_verify::{PublicKey, Signature};
 use serde::Deserialize;
@@ -219,9 +221,22 @@ async fn check_app(app: &AppHandle) -> Result<bool, String> {
 }
 
 fn verify(bytes: &[u8], signature: &str) -> Result<(), String> {
-    let key = PublicKey::decode(PUBKEY).map_err(|error| error.to_string())?;
-    let signature = Signature::decode(signature).map_err(|error| error.to_string())?;
+    let key = PublicKey::decode(&minisign_text(PUBKEY)?).map_err(|error| error.to_string())?;
+    let signature = Signature::decode(&minisign_text(signature)?).map_err(|error| error.to_string())?;
     key.verify(bytes, &signature, false).map_err(|error| error.to_string())
+}
+
+/// Tauri stores the minisign public key and the signature as one base64 line.
+/// `minisign-verify` wants the decoded text, with its comment lines.
+fn minisign_text(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.lines().nth(1).is_some() {
+        return Ok(trimmed.to_string());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(trimmed)
+        .map_err(|error| error.to_string())?;
+    String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
 const UPDATE_ENDPOINT: &str = "https://github.com/goszc/bob-baixa/releases/latest/download/latest.json";
@@ -232,6 +247,17 @@ fn endpoint(config: &Config) -> String {
         return custom.to_string();
     }
     UPDATE_ENDPOINT.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_key_decodes() {
+        let text = minisign_text(PUBKEY).expect("public key text");
+        PublicKey::decode(&text).expect("public key");
+    }
 }
 
 fn newer(remote: &str, current: &str) -> bool {
