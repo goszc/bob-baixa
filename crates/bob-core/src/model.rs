@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub language: String,
     pub theme: String,
+    #[serde(default)]
+    pub theme_glass: bool,
     pub output_dir: String,
     pub filename_template: String,
     pub parallel: u32,
@@ -39,6 +41,7 @@ impl Default for Config {
         Self {
             language: "pt".into(),
             theme: "system".into(),
+            theme_glass: false,
             output_dir: String::new(),
             filename_template: "%(title)s [%(id)s].%(ext)s".into(),
             parallel: 2,

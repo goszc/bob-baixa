@@ -1,3 +1,5 @@
+import type { ThemeMode } from "./types"
+
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 }
@@ -12,11 +14,17 @@ export async function listenBob<T>(handler: (payload: T) => void): Promise<() =>
   return listen<T>("bob", (event) => handler(event.payload))
 }
 
-export async function applyWindowTheme(theme: "system" | "light" | "dark") {
+export async function applyWindowTheme(theme: ThemeMode, glassFamily: boolean) {
   if (!isTauri()) return
   const { getCurrentWindow } = await import("@tauri-apps/api/window")
   const win = getCurrentWindow()
-  await win.setTheme(theme === "system" ? null : theme)
+  const dark =
+    theme === "dark" ||
+    theme === "glass-dark" ||
+    (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+  const glass = theme === "glass-light" || theme === "glass-dark" || (theme === "system" && glassFamily)
+  await win.setTheme(theme === "system" ? null : dark ? "dark" : "light")
+  await invoke("set_window_material", { dark, glass })
 }
 
 export async function chooseFolder(): Promise<string | null> {

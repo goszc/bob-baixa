@@ -104,6 +104,26 @@ async fn install_tools(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_window_material(window: tauri::WebviewWindow, dark: bool, glass: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        if glass {
+            let tint = if dark { (16u8, 16, 18, 170) } else { (243, 241, 236, 176) };
+            if window_vibrancy::apply_acrylic(&window, Some(tint)).is_err() {
+                let _ = window_vibrancy::apply_mica(&window, Some(dark));
+            }
+        } else {
+            let _ = window_vibrancy::clear_acrylic(&window);
+            let _ = window_vibrancy::clear_mica(&window);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (window, dark, glass);
+    }
+}
+
+#[tauri::command]
 async fn cache_thumb(app: tauri::AppHandle, url: String) -> Result<String, String> {
     runtime::cache_thumb(&app, &url).await
 }
@@ -171,6 +191,7 @@ pub fn run() {
             apply_update,
             install_tools,
             cache_thumb,
+            set_window_material,
             read_text_file
         ])
         .run(tauri::generate_context!())

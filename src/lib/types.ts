@@ -1,5 +1,5 @@
 export type Lang = "pt" | "en"
-export type ThemeMode = "system" | "light" | "dark"
+export type ThemeMode = "system" | "light" | "dark" | "glass-light" | "glass-dark"
 export type Page =
   | "home"
   | "queue"
@@ -36,6 +36,7 @@ export type ToolPhase = "missing" | "downloading" | "ready" | "error"
 export interface Config {
   language: Lang
   theme: ThemeMode
+  themeGlass: boolean
   outputDir: string
   filenameTemplate: string
   parallel: number
@@ -183,6 +184,7 @@ export interface EnqueueItem {
 export const defaultConfig: Config = {
   language: "pt",
   theme: "system",
+  themeGlass: false,
   outputDir: "",
   filenameTemplate: "%(title)s [%(id)s].%(ext)s",
   parallel: 2,

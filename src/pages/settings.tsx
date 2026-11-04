@@ -31,17 +31,15 @@ export function Settings() {
     <div>
       <PageHeader title={t("settings_title")} sub={t("settings_sub")} />
       <Section title={t("appearance")} first>
-        <Row label={t("theme")} hint={t("theme_hint")}>
-          <Segmented<ThemeMode>
-            value={config.theme}
-            onChange={(theme) => setConfig({ theme })}
-            options={[
-              { value: "system", label: t("theme_system") },
-              { value: "light", label: t("theme_light") },
-              { value: "dark", label: t("theme_dark") },
-            ]}
-          />
-        </Row>
+        <div className="border-b border-line py-4">
+          <div className="flex items-start justify-between gap-6">
+            <div className="max-w-[240px]">
+              <div className="text-[14px]">{t("theme")}</div>
+              <p className="mt-1 text-[13px] leading-relaxed text-muted">{t("theme_hint")}</p>
+            </div>
+            <ThemePicker theme={config.theme} onPick={(theme) => setConfig({ theme })} systemLabel={t("theme_system")} />
+          </div>
+        </div>
         <Row label={t("language")} hint={t("language_hint")}>
           <Segmented<Lang>
             value={config.language}
@@ -186,6 +184,64 @@ export function Settings() {
         <p className="max-w-[52ch] pb-2 text-[13px] leading-relaxed text-muted">{t("extension_hint")}</p>
         <p className="max-w-[52ch] pb-4 text-[13px] leading-relaxed text-muted">{t("protocol")}</p>
       </Section>
+    </div>
+  )
+}
+
+function ThemePicker({
+  theme,
+  onPick,
+  systemLabel,
+}: {
+  theme: ThemeMode
+  onPick: (theme: ThemeMode) => void
+  systemLabel: string
+}) {
+  const t = useT()
+  const choices: { id: ThemeMode; label: string; swatch: string }[] = [
+    { id: "light", label: t("theme_light"), swatch: "border-[#e4e4e1] bg-[#f7f7f5]" },
+    { id: "dark", label: t("theme_dark"), swatch: "border-[#2c2c2c] bg-[#161616]" },
+    {
+      id: "glass-light",
+      label: t("theme_glass_light"),
+      swatch: "border-white/80 bg-white/45 shadow-[0_6px_16px_rgba(40,36,30,0.08)] backdrop-blur-md",
+    },
+    {
+      id: "glass-dark",
+      label: t("theme_glass_dark"),
+      swatch: "border-white/20 bg-white/10 shadow-[0_6px_16px_rgba(0,0,0,0.35)] backdrop-blur-md",
+    },
+  ]
+  return (
+    <div className="flex flex-col items-end gap-3">
+      <button
+        type="button"
+        data-theme="system"
+        onClick={() => onPick("system")}
+        className={cn(
+          "h-8 rounded-full px-3 text-[13px]",
+          theme === "system" ? "bg-fill text-onfill" : "text-muted hover:text-ink",
+        )}
+      >
+        {systemLabel}
+      </button>
+      <div className="flex gap-2">
+        {choices.map((choice) => (
+          <button
+            key={choice.id}
+            type="button"
+            data-theme={choice.id}
+            onClick={() => onPick(choice.id)}
+            className={cn("w-[78px] rounded-xl p-1 text-left", theme === choice.id ? "ring-1 ring-ink" : "")}
+          >
+            <span className={cn("relative block h-11 overflow-hidden rounded-lg border", choice.swatch)}>
+              {choice.id === "glass-light" ? <span className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,.9),transparent_55%),linear-gradient(160deg,#e7e2da,#cfc9c0)]" /> : null}
+              {choice.id === "glass-dark" ? <span className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,.28),transparent_55%),linear-gradient(160deg,#2c2c32,#121214)]" /> : null}
+            </span>
+            <span className="mt-1 block text-center text-[11px] leading-tight text-muted">{choice.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

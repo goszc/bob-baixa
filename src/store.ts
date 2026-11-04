@@ -164,13 +164,21 @@ export function useT() {
   return (key: Key, vars?: Record<string, string | number>) => translate(lang, key, vars)
 }
 
-export function applyTheme(theme: ThemeMode) {
-  const dark =
-    theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+export function resolveTheme(theme: ThemeMode, glassFamily: boolean) {
+  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches
+  const dark = theme === "dark" || theme === "glass-dark" || (theme === "system" && systemDark)
+  const glass = theme === "glass-light" || theme === "glass-dark" || (theme === "system" && glassFamily)
+  return { dark, glass }
+}
+
+export function applyTheme(theme: ThemeMode, glassFamily = getState().config.themeGlass) {
+  const { dark, glass } = resolveTheme(theme, glassFamily)
   document.documentElement.classList.toggle("dark", dark)
+  document.documentElement.classList.toggle("glass", glass)
   document.documentElement.style.colorScheme = dark ? "dark" : "light"
   localStorage.setItem("bob-baixa-theme", theme)
-  void applyWindowTheme(theme)
+  localStorage.setItem("bob-baixa-glass", glassFamily ? "1" : "0")
+  void applyWindowTheme(theme, glassFamily)
 }
 
 function lang() {
@@ -671,9 +679,12 @@ export function closeConfirm() {
 }
 
 export function setConfig(patch: Partial<Config>) {
-  const config = { ...getState().config, ...patch }
+  let themeGlass = patch.themeGlass ?? getState().config.themeGlass
+  if (patch.theme === "light" || patch.theme === "dark") themeGlass = false
+  if (patch.theme === "glass-light" || patch.theme === "glass-dark") themeGlass = true
+  const config = { ...getState().config, ...patch, themeGlass }
   setState({ config })
-  if (patch.theme) applyTheme(patch.theme)
+  if (patch.theme || patch.themeGlass !== undefined) applyTheme(config.theme, config.themeGlass)
   if (patch.language) localStorage.setItem("bob-baixa-lang", patch.language)
   if (isTauri()) void invoke("set_config", { config })
 }
@@ -856,8 +867,15 @@ export function initApp() {
   if (!previewMode) {
     const savedTheme = localStorage.getItem("bob-baixa-theme")
     const savedLang = localStorage.getItem("bob-baixa-lang")
-    if (savedTheme === "light" || savedTheme === "dark" || savedTheme === "system") {
-      state = { ...state, config: { ...state.config, theme: savedTheme } }
+    if (savedTheme === "light" || savedTheme === "dark" || savedTheme === "system" || savedTheme === "glass-light" || savedTheme === "glass-dark") {
+      state = {
+        ...state,
+        config: {
+          ...state.config,
+          theme: savedTheme,
+          themeGlass: localStorage.getItem("bob-baixa-glass") === "1" || savedTheme === "glass-light" || savedTheme === "glass-dark",
+        },
+      }
     }
     if (savedLang === "pt" || savedLang === "en") {
       state = { ...state, config: { ...state.config, language: savedLang } }

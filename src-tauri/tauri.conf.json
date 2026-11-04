@@ -22,6 +22,8 @@
         "minHeight": 640,
         "resizable": true,
         "center": true,
+        "transparent": true,
+        "backgroundColor": "#00000000",
         "dragDropEnabled": true
       }
     ],
