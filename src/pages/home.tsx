@@ -9,19 +9,25 @@ import { Switch } from "../components/ui/switch"
 import { Textarea } from "../components/ui/textarea"
 import { formatClock } from "../lib/format"
 import type { Key } from "../lib/i18n"
+import { builtinPresets, configMatchesPreset } from "../lib/presets"
 import type { Quality } from "../lib/types"
 import { cn } from "../lib/cn"
 import {
   acceptClipboard,
   analyze,
   appendLinks,
+  applyPreset,
+  deletePreset,
   dismissClipboard,
   downloadNow,
+  renamePreset,
+  savePreset,
   setConfig,
   setDraft,
   setField,
   toggleAllEntries,
   toggleEntry,
+  updatePreset,
   useApp,
   useT,
 } from "../store"
@@ -124,6 +130,7 @@ export function Home() {
           </Button>
         </div>
       </div>
+      <Presets />
       {app.error && app.page === "home" ? <p className="mt-3 text-[13px] text-danger">{app.error}</p> : null}
       <div className="mt-5 space-y-3">
         {app.analyzed.map((media) =>
@@ -228,6 +235,78 @@ export function Home() {
           </Field>
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function Presets() {
+  const app = useApp()
+  const t = useT()
+  const [name, setName] = useState("")
+  const [selected, setSelected] = useState<string | null>(null)
+  const all = [...builtinPresets, ...app.config.presets]
+  const matched = all.find((preset) => configMatchesPreset(app.config, preset))
+  const activeId = selected ?? matched?.id
+  const custom = app.config.presets.find((preset) => preset.id === selected) ?? null
+  const typed = name.trim()
+  return (
+    <div className="mt-5">
+      <div className="text-[12px] text-muted">{t("presets")}</div>
+      <p className="mt-1 text-[13px] leading-relaxed text-muted">{t("preset_hint")}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {all.map((preset) => {
+          const on = activeId === preset.id
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => {
+                setSelected(preset.id)
+                applyPreset(preset)
+              }}
+              className={cn(
+                "h-8 rounded-full border px-3 text-[13px] transition-colors",
+                on ? "border-fill bg-fill text-onfill" : "border-line text-muted hover:text-ink",
+              )}
+            >
+              {preset.name}
+            </button>
+          )
+        })}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Input className="w-[200px]" value={name} placeholder={t("preset_name")} onChange={(event) => setName(event.target.value)} />
+        <Button variant="outline" onClick={() => savePreset(name)}>
+          {t("preset_save")}
+        </Button>
+        {custom && typed && typed !== custom.name ? (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              renamePreset(custom.id, typed)
+              setName("")
+            }}
+          >
+            {t("preset_rename")}
+          </Button>
+        ) : null}
+        {custom ? (
+          <Button variant="ghost" onClick={() => updatePreset(custom.id)}>
+            {t("preset_update")}
+          </Button>
+        ) : null}
+        {custom ? (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              deletePreset(custom.id)
+              setSelected(null)
+            }}
+          >
+            {t("preset_delete")}
+          </Button>
+        ) : null}
+      </div>
     </div>
   )
 }

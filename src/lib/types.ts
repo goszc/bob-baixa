@@ -62,6 +62,27 @@ export interface Config {
   downloadKnownOnFirstWatch: boolean
   autoUpdate: boolean
   updateUrl: string
+  contextMenu: boolean
+  presets: DownloadPreset[]
+  seenVersion: string
+}
+
+export interface DownloadPreset {
+  id: string
+  name: string
+  quality: Quality
+  container: Container
+  audioOnly: boolean
+  audioFormat: AudioFormat
+  audioBitrate: string
+  subtitles: boolean
+  embedSubs: boolean
+  subLangs: string
+  embedThumbnail: boolean
+  embedMetadata: boolean
+  embedChapters: boolean
+  sponsorblock: boolean
+  sponsorCategories: string[]
 }
 
 export interface FormatOption {
@@ -210,4 +231,7 @@ export const defaultConfig: Config = {
   downloadKnownOnFirstWatch: false,
   autoUpdate: true,
   updateUrl: "",
+  contextMenu: false,
+  presets: [],
+  seenVersion: "",
 }

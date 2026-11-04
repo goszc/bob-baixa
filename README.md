@@ -39,7 +39,9 @@ claro, escuro, vidro claro e vidro escuro. **seguir o windows** acompanha o modo
 - cola um ou vários links. o título e a miniatura aparecem sozinhos. **baixar** manda para a fila em 1080p mp4
 - playlists e canais viram vários itens
 - qualidade, formato, só áudio (mp3, m4a, opus, flac), recorte (`1:20` até `3:45`) e limite de velocidade
+- predefinições de um clique: música mp3, vídeo 4k, vídeo 1080, e as que você salvar a partir das opções atuais
 - fila com progresso, velocidade, tempo restante, pausar, continuar, cancelar e tentar de novo
+- até 4 downloads ao mesmo tempo. o padrão é 2, em configurações, e a fila respeita isso ao pausar, continuar e tentar de novo
 - agendar o início da fila. o app precisa estar aberto ou na bandeja
 - buscar no youtube
 - converter um arquivo que já está no computador
@@ -49,6 +51,7 @@ claro, escuro, vidro claro e vidro escuro. **seguir o windows** acompanha o modo
 - pasta de destino, modelo do nome e configuração gravada
 - cookies em **auto**: se o vídeo pedir login, tenta de novo com o navegador instalado. se o banco de cookies travar, feche o navegador
 - `ctrl+shift+b` pega o link copiado e começa a baixar
+- menu de contexto, desligado por padrão: **baixar link copiado com bob baixa** no clique direito da área de trabalho ou de uma pasta. no windows 11 pode aparecer em mostrar mais opções. não pede administrador e some ao desligar ou desinstalar
 - soltar um link, um `.txt` ou um vídeo na janela
 - avisos do windows quando um download termina ou falha
 - temas claro, escuro, vidro claro e vidro escuro, além de seguir o windows
@@ -72,6 +75,7 @@ com **atualizar sozinho** ligado (é o padrão), o app:
 - confere o ffmpeg nas versões do [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) e baixa de novo se a publicação for mais nova
 - se um download falhar com erro de extrator, atualiza o yt-dlp e tenta outra vez
 - consulta [latest.json](https://github.com/goszc/bob-baixa/releases/latest/download/latest.json). se houver versão nova e a assinatura bater com a chave pública, mostra **nova versão disponível. reiniciar?**
+- depois de atualizar, abre **o que há de novo** uma vez. o mesmo texto está em configurações e no `CHANGELOG.md`
 
 em configurações, **verificar agora** faz a mesma checagem na hora. o campo **endereço das atualizações** só precisa ser preenchido se você publicar o manifesto em outro lugar.
 
@@ -83,8 +87,9 @@ a chave pública está em `packaging/updater.pub`. a chave privada não entra no
 2. **settings** → **secrets and variables** → **actions** → **new repository secret**
 3. nome: `TAURI_SIGNING_PRIVATE_KEY`
 4. valor: o conteúdo inteiro do arquivo da chave privada (uma linha começando com `dW50cnVzdGVkIGNvbW1lbnQ6`)
-5. suba a versão em `package.json`, `src-tauri/tauri.conf.json` e `src-tauri/Cargo.toml`
-6. envie uma tag `v0.1.1` (ou a próxima). o workflow `.github/workflows/windows.yml` gera o instalador num runner windows, assina com `tauri signer sign` e publica `bob-baixa-setup.exe` e `latest.json` na release
+5. suba a versão em `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` e no `DisplayVersion` de `packaging/bob-baixa.nsi`
+6. escreva a seção dessa versão no `CHANGELOG.md` (o título é `## 0.2.0`, por exemplo)
+7. envie uma tag `v0.2.0` (ou a próxima). o workflow `.github/workflows/windows.yml` gera o instalador num runner windows, assina com `tauri signer sign`, usa a seção do changelog como texto da release e como `notes` do `latest.json`, e publica `bob-baixa-setup.exe` e `latest.json`
 
 sem esse segredo, o workflow ainda gera o instalador, mas não publica o manifesto assinado. uma atualização sem assinatura válida é ignorada.
 

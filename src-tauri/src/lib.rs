@@ -1,8 +1,11 @@
 mod hidden;
 mod runtime;
+mod shell_menu;
 mod updates;
 
-use bob_core::{Config, ConvertJob, EnqueueItem, HistoryEntry, Job, MediaItem, SearchHit, ToolStatus, Watch};
+use bob_core::{
+    Config, ConvertJob, EnqueueItem, HistoryEntry, Job, MediaItem, SearchHit, ToolStatus, Watch,
+};
 use runtime::AppState;
 use serde::Serialize;
 use tauri::Manager;
@@ -17,6 +20,9 @@ struct Snapshot {
     tools: ToolStatus,
     schedule_at: Option<String>,
     convert_job: Option<ConvertJob>,
+    ready: bool,
+    whats_new: bool,
+    release_notes: String,
 }
 
 #[tauri::command]
@@ -60,7 +66,12 @@ async fn clear_schedule(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn convert(app: tauri::AppHandle, input: String, preset: String, bitrate: String) -> Result<(), String> {
+async fn convert(
+    app: tauri::AppHandle,
+    input: String,
+    preset: String,
+    bitrate: String,
+) -> Result<(), String> {
     runtime::convert(&app, input, preset, bitrate).await
 }
 
@@ -105,11 +116,20 @@ async fn install_tools(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn ack_whats_new(app: tauri::AppHandle) {
+    runtime::ack_whats_new(&app).await;
+}
+
+#[tauri::command]
 fn set_window_material(window: tauri::WebviewWindow, dark: bool, glass: bool) {
     #[cfg(target_os = "windows")]
     {
         if glass {
-            let tint = if dark { (16u8, 16, 18, 170) } else { (243, 241, 236, 176) };
+            let tint = if dark {
+                (16u8, 16, 18, 170)
+            } else {
+                (243, 241, 236, 176)
+            };
             if window_vibrancy::apply_acrylic(&window, Some(tint)).is_err() {
                 let _ = window_vibrancy::apply_mica(&window, Some(dark));
             }
@@ -132,7 +152,11 @@ async fn cache_thumb(app: tauri::AppHandle, url: String) -> Result<String, Strin
 #[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
     let file = std::path::Path::new(&path);
-    let name = file.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_ascii_lowercase();
+    let name = file
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if !matches!(name.as_str(), "txt" | "list" | "urls" | "text") {
         return Err("só arquivos de texto".into());
     }
@@ -193,7 +217,8 @@ pub fn run() {
             install_tools,
             cache_thumb,
             set_window_material,
-            read_text_file
+            read_text_file,
+            ack_whats_new
         ])
         .run(tauri::generate_context!())
         .expect("bob baixa");
