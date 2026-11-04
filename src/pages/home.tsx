@@ -129,7 +129,7 @@ export function Home() {
         {app.analyzed.map((media) =>
           media.kind === "video" ? (
             <article key={media.id} className="flex gap-4 rounded-2xl border border-line bg-surface p-3">
-              <Thumb src={media.thumbnail} className="h-[104px] w-[184px]" />
+              <Thumb src={media.thumbnail} videoUrl={media.url} className="h-[104px] w-[184px]" />
               <div className="min-w-0 flex-1 py-1">
                 <h2 className="truncate text-[16px] font-medium tracking-tight select-text">{media.title}</h2>
                 <p className="mt-1 text-[13px] text-muted">
@@ -156,7 +156,7 @@ export function Home() {
                   return (
                     <li key={entry.id} className="flex items-center gap-3 border-t border-line py-2.5">
                       <input type="checkbox" checked={selected} aria-label={entry.title} onChange={() => toggleEntry(media.id, entry.id)} className="h-4 w-4 accent-[var(--ink)]" />
-                      <Thumb src={entry.thumbnail} className="h-12 w-[84px] rounded-lg" />
+                      <Thumb src={entry.thumbnail} videoUrl={entry.url} className="h-12 w-[84px] rounded-lg" />
                       <span className="min-w-0 flex-1 truncate text-[14px]">{entry.title}</span>
                       <span className="text-[12px] tabular-nums text-muted">{formatClock(entry.duration)}</span>
                     </li>

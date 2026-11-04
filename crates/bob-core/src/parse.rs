@@ -538,7 +538,27 @@ fn thumb(value: &Value) -> Option<String> {
     if let Some(url) = string(value, "thumbnail").filter(|url| url.starts_with("http")) {
         return Some(url);
     }
-    string(value, "id").filter(|id| id.len() == 11).map(|id| format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))
+    youtube_id(string(value, "id").as_deref())
+        .or_else(|| youtube_id(string(value, "url").as_deref()))
+        .or_else(|| youtube_id(string(value, "webpage_url").as_deref()))
+        .map(|id| format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))
+}
+
+fn youtube_id(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.len() == 11 && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Some(value.to_string());
+    }
+    for marker in ["v=", "youtu.be/", "/shorts/", "/embed/", "/vi/"] {
+        if let Some(start) = value.find(marker) {
+            let id = &value[start + marker.len()..];
+            let id: String = id.chars().take(11).collect();
+            if id.len() == 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                return Some(id);
+            }
+        }
+    }
+    None
 }
 
 pub fn parse_json_value_text(text: &str) -> Result<Value, String> {
@@ -832,6 +852,9 @@ mod tests {
         });
         let list = parse_media(&playlist, "https://www.youtube.com/playlist?list=PL1");
         assert_eq!(list.entries[0].thumbnail.as_deref(), Some("https://i.ytimg.com/vi/YF4wa9gB0cA/hqdefault.jpg"));
+        let bare = serde_json::json!({"id": "dQw4w9WgXcQ", "title": "sem capa", "url": "dQw4w9WgXcQ"});
+        let hit = parse_search(&serde_json::json!({"entries": [bare]}));
+        assert_eq!(hit[0].thumbnail.as_deref(), Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"));
         assert!(looks_like_auth("ERROR: Sign in to confirm your age"));
         assert!(looks_like_extractor("ERROR: unable to extract player response"));
         assert!(looks_like_cookie_lock("failed to copy cookie database: database is locked"));

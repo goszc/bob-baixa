@@ -1,19 +1,25 @@
-import { isTauri } from "./api"
+const ID = /(?:v=|youtu\.be\/|\/shorts\/|\/embed\/|\/vi\/)([\w-]{11})/
 
-const memory = new Map<string, string>()
+export function youtubeId(value?: string): string | undefined {
+  if (!value) return undefined
+  if (/^[\w-]{11}$/.test(value)) return value
+  return value.match(ID)?.[1]
+}
 
-export async function resolveThumb(url?: string): Promise<string | undefined> {
-  if (!url) return undefined
-  if (!url.startsWith("http://") && !url.startsWith("https://")) return url
-  const cached = memory.get(url)
-  if (cached) return cached
-  if (!isTauri()) {
-    memory.set(url, url)
-    return url
+export function youtubeThumb(value?: string, quality: "hqdefault" | "mqdefault" = "hqdefault"): string | undefined {
+  const id = youtubeId(value)
+  return id ? `https://i.ytimg.com/vi/${id}/${quality}.jpg` : undefined
+}
+
+export function thumbSources(src?: string, videoUrl?: string): string[] {
+  const sources: string[] = []
+  const add = (url?: string) => {
+    if (url && url.startsWith("https://") && !sources.includes(url)) sources.push(url)
   }
-  const { invoke, convertFileSrc } = await import("@tauri-apps/api/core")
-  const path = await invoke<string>("cache_thumb", { url })
-  const src = convertFileSrc(path)
-  memory.set(url, src)
-  return src
+  add(src)
+  add(youtubeThumb(videoUrl))
+  add(youtubeThumb(src))
+  add(youtubeThumb(videoUrl, "mqdefault"))
+  add(youtubeThumb(src, "mqdefault"))
+  return sources
 }

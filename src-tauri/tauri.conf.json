@@ -28,7 +28,20 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self' ipc: http://ipc.localhost https://ipc.localhost",
+        "img-src": "'self' asset: http://asset.localhost https://asset.localhost blob: data: https://i.ytimg.com https://*.ytimg.com https://*.ggpht.com https://*.googleusercontent.com",
+        "style-src": "'self' 'unsafe-inline'",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* https:"
+      },
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": ["$APPDATA/**", "$APPLOCALDATA/**", "$APPDATA/**", "$LOCALDATA/**", "$TEMP/**", "$DOWNLOAD/**", "$VIDEO/**", "$HOME/**"],
+          "requireLiteralLeadingDot": false
+        }
+      }
     }
   },
   "bundle": {

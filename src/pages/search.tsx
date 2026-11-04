@@ -37,7 +37,7 @@ export function Search() {
         <ul className="mt-8 border-t border-line">
           {app.searchHits.map((hit) => (
             <li key={hit.id} className="flex items-center gap-4 border-b border-line py-4">
-              <Thumb src={hit.thumbnail} className="h-[68px] w-[120px]" />
+              <Thumb src={hit.thumbnail} videoUrl={hit.url} className="h-[68px] w-[120px]" />
               <div className="min-w-0 flex-1">
                 <h2 className="truncate text-[15px] font-medium tracking-tight select-text">{hit.title}</h2>
                 <p className="mt-1 text-[13px] text-muted">

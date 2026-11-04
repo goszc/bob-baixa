@@ -6,7 +6,7 @@ use minisign_verify::{PublicKey, Signature};
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use crate::hidden::tokio_command;
 
 use crate::runtime::{self, AppState};
 
@@ -91,7 +91,7 @@ pub async fn apply_update(app: &AppHandle) -> Result<(), String> {
         let inner = app.state::<AppState>().inner.clone().lock_owned().await;
         inner.pending_installer.clone().ok_or_else(|| "sem instalador".to_string())?
     };
-    Command::new(&path).arg("/S").spawn().map_err(|error| error.to_string())?;
+    tokio_command(&path).arg("/S").spawn().map_err(|error| error.to_string())?;
     app.exit(0);
     Ok(())
 }
@@ -100,7 +100,7 @@ pub async fn refresh_ytdlp(app: &AppHandle) -> Result<(), String> {
     let Ok(bin) = runtime::ytdlp_path(app).await else {
         return Ok(());
     };
-    let _ = Command::new(&bin).arg("-U").output().await;
+    let _ = tokio_command(&bin).arg("-U").output().await;
     if let Some(version) = command_line(&bin, "--version").await {
         let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
         inner.tools.ytdlp = "ready".into();
@@ -249,7 +249,7 @@ fn client() -> Result<reqwest::Client, String> {
 }
 
 async fn command_line(bin: &PathBuf, arg: &str) -> Option<String> {
-    let output = Command::new(bin).arg(arg).output().await.ok()?;
+    let output = tokio_command(bin).arg(arg).output().await.ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     let line = text.lines().next()?.trim();
     if arg == "-version" {

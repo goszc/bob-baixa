@@ -1,4 +1,5 @@
 import { PageHeader } from "../components/page-header"
+import { Thumb } from "../components/thumb"
 import { Button } from "../components/ui/button"
 import { formatWhen } from "../lib/format"
 import { askClearHistory, openOutput, useApp, useT } from "../store"
@@ -22,6 +23,7 @@ export function History() {
         <ul className="border-t border-line">
           {app.history.map((entry) => (
             <li key={entry.id} className="flex items-center gap-4 border-b border-line py-4">
+              <Thumb videoUrl={entry.url} className="h-[56px] w-[100px]" />
               <div className="min-w-0 flex-1">
                 <h2 className="truncate text-[15px] font-medium tracking-tight select-text">{entry.title}</h2>
                 <p className="mt-1 text-[13px] text-muted">

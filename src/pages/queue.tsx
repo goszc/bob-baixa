@@ -73,7 +73,7 @@ function JobRow({ job }: { job: Job }) {
   return (
     <li className="border-b border-line py-5">
       <div className="flex gap-4">
-        <Thumb src={job.thumbnail} className="h-[72px] w-[128px]" />
+        <Thumb src={job.thumbnail} videoUrl={job.url} className="h-[72px] w-[128px]" />
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-4">
             <h2 className="truncate text-[15px] font-medium tracking-tight select-text">{job.title}</h2>

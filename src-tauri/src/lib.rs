@@ -1,3 +1,4 @@
+mod hidden;
 mod runtime;
 mod updates;
 

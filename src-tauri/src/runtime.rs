@@ -15,7 +15,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use crate::hidden::tokio_command;
 use std::sync::Arc as StdArc;
 use tokio::sync::{Mutex, Notify};
 
@@ -604,7 +604,7 @@ pub async fn install_tools(app: &AppHandle, force: bool) -> Result<(), String> {
 pub async fn update_ytdlp(app: &AppHandle) -> Result<(), String> {
     let bin = ytdlp_path(app).await?;
     let language = app.state::<AppState>().inner.clone().lock_owned().await.config.language.clone();
-    let updated = Command::new(&bin).arg("-U").output().await;
+    let updated = tokio_command(&bin).arg("-U").output().await;
     let ok = updated.as_ref().map(|output| output.status.success()).unwrap_or(false);
     if !ok {
         install_tools(app, true).await?;
@@ -728,7 +728,7 @@ async fn run_download(app: AppHandle, id: String) {
     }
     let args = build_download_args(&job, &ffmpeg.to_string_lossy());
     let mut child = match {
-        let mut cmd = Command::new(&bin);
+        let mut cmd = tokio_command(&bin);
         cmd.args(&args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
         cmd.spawn()
     } {
@@ -1084,7 +1084,7 @@ async fn run_convert(app: AppHandle, ffmpeg: PathBuf, input: String, output: Str
         0.0
     };
     let args = ffmpeg_args(&input, &output, &preset, &bitrate);
-    let mut cmd = Command::new(&ffmpeg);
+    let mut cmd = tokio_command(&ffmpeg);
     cmd.args(&args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
     let mut child = match cmd.spawn() {
         Ok(child) => child,
@@ -1266,7 +1266,7 @@ pub(crate) async fn ytdlp_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 async fn capture(bin: &Path, args: &[String]) -> Result<String, String> {
-    let mut cmd = Command::new(bin);
+    let mut cmd = tokio_command(bin);
     cmd.args(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
     let output = tokio::time::timeout(Duration::from_secs(180), cmd.output())
         .await
@@ -1282,12 +1282,12 @@ async fn capture(bin: &Path, args: &[String]) -> Result<String, String> {
 }
 
 async fn command_stdout(bin: &Path, args: &[String]) -> Option<String> {
-    let output = Command::new(bin).args(args).output().await.ok()?;
+    let output = tokio_command(bin).args(args).output().await.ok()?;
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 async fn command_version(bin: &Path, arg: &str) -> Option<String> {
-    let output = Command::new(bin).arg(arg).output().await.ok()?;
+    let output = tokio_command(bin).arg(arg).output().await.ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     let line = text.lines().next()?.trim();
     if arg == "-version" {
@@ -1441,7 +1441,7 @@ fn header(name: &str, value: &str) -> tiny_http::Header {
 fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output();
+        let _ = crate::hidden::std_command("taskkill").args(["/F", "/T", "/PID", &pid.to_string()]).output();
     }
     #[cfg(unix)]
     {
