@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use base64::Engine;
 
+use crate::hidden::tokio_command;
 use bob_core::{text, BobEvent, Config};
 use minisign_verify::{PublicKey, Signature};
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::AsyncWriteExt;
-use crate::hidden::tokio_command;
 
 use crate::runtime::{self, AppState};
 
@@ -42,10 +42,7 @@ pub async fn startup(app: &AppHandle) {
     if !auto {
         return;
     }
-    let _ = refresh_ytdlp(app).await;
-    let _ = refresh_ffmpeg(app).await;
-    let _ = check_app(app).await;
-    mark_checked(app).await;
+    let _ = run_checks(app, false).await;
 }
 
 pub async fn periodic(app: &AppHandle) {
@@ -59,16 +56,35 @@ pub async fn periodic(app: &AppHandle) {
             .as_deref()
             .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
         {
-            Some(time) => chrono::Utc::now().signed_duration_since(time) > chrono::Duration::from_std(CHECK_EVERY).unwrap_or_default(),
+            Some(time) => {
+                chrono::Utc::now().signed_duration_since(time)
+                    > chrono::Duration::from_std(CHECK_EVERY).unwrap_or_default()
+            }
             None => true,
         }
     };
     if due {
-        startup(app).await;
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            startup(&app).await;
+        });
     }
 }
 
 pub async fn check_now(app: &AppHandle) -> Result<(), String> {
+    run_checks(app, true).await
+}
+
+async fn run_checks(app: &AppHandle, manual: bool) -> Result<(), String> {
+    let Some(_busy) = runtime::acquire_update(app) else {
+        return if manual {
+            Err("já está verificando.".into())
+        } else {
+            Ok(())
+        };
+    };
+    // Mark before the network calls so the ticker does not start another check every second.
+    mark_checked(app).await;
     let language = {
         let inner = app.state::<AppState>().inner.clone().lock_owned().await;
         inner.config.language.clone()
@@ -76,8 +92,7 @@ pub async fn check_now(app: &AppHandle) -> Result<(), String> {
     let ytdlp = refresh_ytdlp(app).await.is_ok();
     let ffmpeg = refresh_ffmpeg(app).await.unwrap_or(false);
     let app_update = check_app(app).await.unwrap_or(false);
-    mark_checked(app).await;
-    if !app_update {
+    if manual && !app_update {
         let message = if ytdlp || ffmpeg {
             text(&language, "ferramentas atualizadas", "tools updated")
         } else {
@@ -91,11 +106,37 @@ pub async fn check_now(app: &AppHandle) -> Result<(), String> {
 pub async fn apply_update(app: &AppHandle) -> Result<(), String> {
     let path = {
         let inner = app.state::<AppState>().inner.clone().lock_owned().await;
-        inner.pending_installer.clone().ok_or_else(|| "sem instalador".to_string())?
+        inner
+            .pending_installer
+            .clone()
+            .ok_or_else(|| "sem instalador".to_string())?
     };
-    tokio_command(&path).arg("/S").spawn().map_err(|error| error.to_string())?;
+    launch_installer(&path)?;
     app.exit(0);
     Ok(())
+}
+
+fn launch_installer(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "ping 127.0.0.1 -n 4 >nul & start \"\" \"{}\" /S",
+            path.display()
+        );
+        crate::hidden::std_command("cmd")
+            .args(["/C", &script])
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        tokio_command(path)
+            .arg("/S")
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
 }
 
 pub async fn refresh_ytdlp(app: &AppHandle) -> Result<(), String> {
@@ -119,6 +160,9 @@ async fn refresh_ffmpeg(app: &AppHandle) -> Result<bool, String> {
     if !cfg!(windows) {
         return Ok(false);
     }
+    let Some(_busy) = runtime::acquire_tools(app) else {
+        return Ok(false);
+    };
     let client = client()?;
     let response = client
         .get("https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest")
@@ -128,8 +172,14 @@ async fn refresh_ffmpeg(app: &AppHandle) -> Result<bool, String> {
     if !response.status().is_success() {
         return Ok(false);
     }
-    let value: serde_json::Value = serde_json::from_slice(&response.bytes().await.map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
-    let published = value.get("published_at").and_then(|item| item.as_str()).unwrap_or("").to_string();
+    let value: serde_json::Value =
+        serde_json::from_slice(&response.bytes().await.map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    let published = value
+        .get("published_at")
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .to_string();
     if published.is_empty() {
         return Ok(false);
     }
@@ -186,18 +236,33 @@ async fn check_app(app: &AppHandle) -> Result<bool, String> {
         return Ok(false);
     }
     let client = client()?;
-    let response = client.get(&endpoint).send().await.map_err(|error| error.to_string())?;
+    let response = client
+        .get(&endpoint)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
         return Ok(false);
     }
-    let manifest: Manifest = serde_json::from_slice(&response.bytes().await.map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    let manifest: Manifest =
+        serde_json::from_slice(&response.bytes().await.map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
     if !newer(&manifest.version, APP_VERSION) {
         return Ok(false);
     }
     let Some(file) = manifest.platforms.windows else {
         return Ok(false);
     };
-    let bytes = client.get(&file.url).send().await.map_err(|error| error.to_string())?.error_for_status().map_err(|error| error.to_string())?.bytes().await.map_err(|error| error.to_string())?;
+    let bytes = client
+        .get(&file.url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .bytes()
+        .await
+        .map_err(|error| error.to_string())?;
     verify(&bytes, &file.signature)?;
     let dir = {
         let inner = app.state::<AppState>().inner.clone().lock_owned().await;
@@ -205,8 +270,12 @@ async fn check_app(app: &AppHandle) -> Result<bool, String> {
     };
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("bob-baixa-setup.exe");
-    let mut out = tokio::fs::File::create(&path).await.map_err(|error| error.to_string())?;
-    out.write_all(&bytes).await.map_err(|error| error.to_string())?;
+    let mut out = tokio::fs::File::create(&path)
+        .await
+        .map_err(|error| error.to_string())?;
+    out.write_all(&bytes)
+        .await
+        .map_err(|error| error.to_string())?;
     {
         let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
         inner.pending_installer = Some(path);
@@ -222,8 +291,10 @@ async fn check_app(app: &AppHandle) -> Result<bool, String> {
 
 fn verify(bytes: &[u8], signature: &str) -> Result<(), String> {
     let key = PublicKey::decode(&minisign_text(PUBKEY)?).map_err(|error| error.to_string())?;
-    let signature = Signature::decode(&minisign_text(signature)?).map_err(|error| error.to_string())?;
-    key.verify(bytes, &signature, false).map_err(|error| error.to_string())
+    let signature =
+        Signature::decode(&minisign_text(signature)?).map_err(|error| error.to_string())?;
+    key.verify(bytes, &signature, false)
+        .map_err(|error| error.to_string())
 }
 
 /// Tauri stores the minisign public key and the signature as one base64 line.
@@ -239,7 +310,8 @@ fn minisign_text(value: &str) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
-const UPDATE_ENDPOINT: &str = "https://github.com/goszc/bob-baixa/releases/latest/download/latest.json";
+const UPDATE_ENDPOINT: &str =
+    "https://github.com/goszc/bob-baixa/releases/latest/download/latest.json";
 
 fn endpoint(config: &Config) -> String {
     let custom = config.update_url.trim();
@@ -266,14 +338,23 @@ fn newer(remote: &str, current: &str) -> bool {
             .trim()
             .trim_start_matches('v')
             .split(['.', '-'])
-            .map(|part| part.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0))
+            .map(|part| {
+                part.chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0)
+            })
             .collect()
     }
     parts(remote) > parts(current)
 }
 
 fn client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder().user_agent("bob-baixa").build().map_err(|error| error.to_string())
+    reqwest::Client::builder()
+        .user_agent("bob-baixa")
+        .build()
+        .map_err(|error| error.to_string())
 }
 
 async fn command_line(bin: &PathBuf, arg: &str) -> Option<String> {

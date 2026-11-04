@@ -1,6 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs"
+import { changelogSection } from "./changelog.mjs"
 
 const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version
+const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8")
+const notes = changelogSection(changelog, version)
+if (!notes) {
+  console.error(`changelog sem a seção ${version}`)
+  process.exit(1)
+}
 const signature = readFileSync(new URL("../packaging/bob-baixa-setup.exe.sig", import.meta.url), "utf8").trim()
 const repo = process.env.GITHUB_REPOSITORY
 const url = process.env.UPDATE_ASSET_URL
@@ -13,7 +20,7 @@ if (!url) {
 
 const manifest = {
   version,
-  notes: "bob baixa",
+  notes,
   pub_date: new Date().toISOString(),
   platforms: {
     "windows-x86_64": { signature, url },

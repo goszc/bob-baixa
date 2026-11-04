@@ -9,6 +9,7 @@ pub struct Config {
     pub theme_glass: bool,
     pub output_dir: String,
     pub filename_template: String,
+    #[serde(default = "default_parallel")]
     pub parallel: u32,
     pub global_speed: String,
     pub clipboard_watch: bool,
@@ -34,6 +35,14 @@ pub struct Config {
     pub auto_update: bool,
     #[serde(default)]
     pub update_url: String,
+    /// Windows per-user context menu. Off until the user turns it on.
+    #[serde(default)]
+    pub context_menu: bool,
+    #[serde(default)]
+    pub presets: Vec<DownloadPreset>,
+    /// Last version whose "o que há de novo" dialog was dismissed.
+    #[serde(default)]
+    pub seen_version: String,
 }
 
 impl Default for Config {
@@ -72,12 +81,82 @@ impl Default for Config {
             download_known_on_first_watch: false,
             auto_update: true,
             update_url: String::new(),
+            context_menu: false,
+            presets: Vec::new(),
+            seen_version: String::new(),
         }
     }
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_parallel() -> u32 {
+    2
+}
+
+fn default_bitrate() -> String {
+    "192k".into()
+}
+
+fn default_sub_langs() -> String {
+    "pt.*,en.*".into()
+}
+
+pub const PARALLEL_MIN: u32 = 1;
+pub const PARALLEL_MAX: u32 = 4;
+
+pub fn clamp_parallel(value: u32) -> u32 {
+    value.clamp(PARALLEL_MIN, PARALLEL_MAX)
+}
+
+/// Jobs are stored newest-first. Claim the oldest queued ones that still fit.
+pub fn claim_downloads(jobs: &mut [Job], parallel: u32) -> Vec<String> {
+    let mut left = clamp_parallel(parallel) as usize;
+    left = left.saturating_sub(jobs.iter().filter(|job| job.state == "downloading").count());
+    let mut ids = Vec::new();
+    for job in jobs.iter_mut().rev() {
+        if left == 0 {
+            break;
+        }
+        if job.state == "queued" {
+            job.state = "downloading".into();
+            job.error = None;
+            ids.push(job.id.clone());
+            left -= 1;
+        }
+    }
+    ids
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadPreset {
+    pub id: String,
+    pub name: String,
+    pub quality: String,
+    pub container: String,
+    pub audio_only: bool,
+    pub audio_format: String,
+    #[serde(default = "default_bitrate")]
+    pub audio_bitrate: String,
+    #[serde(default)]
+    pub subtitles: bool,
+    #[serde(default = "default_true")]
+    pub embed_subs: bool,
+    #[serde(default = "default_sub_langs")]
+    pub sub_langs: String,
+    #[serde(default = "default_true")]
+    pub embed_thumbnail: bool,
+    #[serde(default = "default_true")]
+    pub embed_metadata: bool,
+    #[serde(default = "default_true")]
+    pub embed_chapters: bool,
+    #[serde(default)]
+    pub sponsorblock: bool,
+    #[serde(default)]
+    pub sponsor_categories: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -380,19 +459,24 @@ impl Job {
             scheduled_at,
             section_start: item.section_start,
             section_end: item.section_end,
-            speed_limit: item.speed_limit.filter(|value| !value.trim().is_empty()).or_else(|| {
-                let global = config.global_speed.trim();
-                if global.is_empty() {
-                    None
-                } else {
-                    Some(global.to_string())
-                }
-            }),
+            speed_limit: item
+                .speed_limit
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    let global = config.global_speed.trim();
+                    if global.is_empty() {
+                        None
+                    } else {
+                        Some(global.to_string())
+                    }
+                }),
             audio_only: config.audio_only,
             quality: config.quality.clone(),
             container: config.container.clone(),
             audio_format: Some(config.audio_format.clone()),
-            format_id: item.format_id.filter(|value| !value.is_empty() && value != "auto"),
+            format_id: item
+                .format_id
+                .filter(|value| !value.is_empty() && value != "auto"),
             audio_bitrate: config.audio_bitrate.clone(),
             subtitles: config.subtitles,
             embed_subs: config.embed_subs,
@@ -408,5 +492,99 @@ impl Job {
             output_dir: config.output_dir.clone(),
             filename_template: config.filename_template.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(id: &str, state: &str) -> Job {
+        let mut job = Job::from_item(
+            EnqueueItem {
+                url: format!("https://example.com/{id}"),
+                ..EnqueueItem::default()
+            },
+            &Config::default(),
+            None,
+        );
+        job.id = id.into();
+        job.state = state.into();
+        job
+    }
+
+    #[test]
+    fn claim_keeps_the_parallel_cap_and_starts_the_oldest() {
+        let mut jobs = vec![
+            job("new", "queued"),
+            job("mid", "downloading"),
+            job("old", "queued"),
+            job("paused", "paused"),
+        ];
+        let ids = claim_downloads(&mut jobs, 2);
+        assert_eq!(ids, vec!["old".to_string()]);
+        assert_eq!(
+            jobs.iter().find(|item| item.id == "new").unwrap().state,
+            "queued"
+        );
+        assert_eq!(
+            jobs.iter().find(|item| item.id == "paused").unwrap().state,
+            "paused"
+        );
+
+        let ids = claim_downloads(&mut jobs, 99);
+        assert_eq!(ids, vec!["new".to_string()]);
+        assert!(claim_downloads(&mut jobs, 4).is_empty());
+    }
+
+    #[test]
+    fn retry_slot_opens_when_a_download_is_no_longer_running() {
+        let mut jobs = vec![
+            job("a", "downloading"),
+            job("b", "queued"),
+            job("c", "queued"),
+        ];
+        assert!(claim_downloads(&mut jobs, 1).is_empty());
+        jobs[0].state = "paused".into();
+        let ids = claim_downloads(&mut jobs, 1);
+        assert_eq!(ids, vec!["c".to_string()]);
+        assert_eq!(
+            jobs.iter().find(|item| item.id == "b").unwrap().state,
+            "queued"
+        );
+    }
+
+    #[test]
+    fn preset_and_old_config_roundtrip() {
+        let preset = DownloadPreset {
+            id: "p1".into(),
+            name: "música mp3".into(),
+            quality: "1080".into(),
+            container: "mp4".into(),
+            audio_only: true,
+            audio_format: "mp3".into(),
+            audio_bitrate: "192k".into(),
+            subtitles: false,
+            embed_subs: false,
+            sub_langs: "pt.*,en.*".into(),
+            embed_thumbnail: true,
+            embed_metadata: true,
+            embed_chapters: false,
+            sponsorblock: false,
+            sponsor_categories: Vec::new(),
+        };
+        let json = serde_json::to_value(&preset).unwrap();
+        assert_eq!(json["audioOnly"], true);
+        assert_eq!(json["name"], "música mp3");
+        let back: DownloadPreset = serde_json::from_value(json).unwrap();
+        assert_eq!(back, preset);
+
+        let old = r#"{"language":"pt","theme":"system","outputDir":"","filenameTemplate":"x","globalSpeed":"","clipboardWatch":true,"minimizeToTray":true,"notifications":true,"hotkey":true,"quality":"1080","container":"mp4","audioOnly":false,"audioFormat":"mp3","audioBitrate":"192k","subtitles":false,"embedSubs":true,"subLangs":"pt.*","embedThumbnail":true,"embedMetadata":true,"embedChapters":true,"sponsorblock":false,"sponsorCategories":[],"cookiesBrowser":"auto","downloadKnownOnFirstWatch":false}"#;
+        let config: Config = serde_json::from_str(old).unwrap();
+        assert_eq!(config.parallel, 2);
+        assert!(!config.context_menu);
+        assert!(config.presets.is_empty());
+        assert!(config.seen_version.is_empty());
+        assert!(config.auto_update);
     }
 }

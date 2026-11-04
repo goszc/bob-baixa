@@ -91,11 +91,39 @@ pub fn percent_decode(input: &str) -> String {
                 continue;
             }
         }
-        out.push(if bytes[index] == b'+' { b' ' } else { bytes[index] });
+        out.push(if bytes[index] == b'+' {
+            b' '
+        } else {
+            bytes[index]
+        });
         index += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
 }
+
+pub fn is_clipboard_launch(arg: &str) -> bool {
+    let arg = arg.trim().trim_matches('"').trim_end_matches('/');
+    arg.eq_ignore_ascii_case("--clipboard") || arg.eq_ignore_ascii_case("bobbaixa://clipboard")
+}
+
+pub fn context_menu_label(language: &str) -> &'static str {
+    if language == "en" {
+        "download copied link with bob baixa"
+    } else {
+        "baixar link copiado com bob baixa"
+    }
+}
+
+pub fn context_menu_command(exe: &str) -> String {
+    format!("\"{}\" --clipboard", exe.trim().trim_matches('"'))
+}
+
+/// HKCU keys for the per-user context menu. The NSIS uninstaller deletes the same paths.
+pub const CONTEXT_MENU_KEYS: &[&str] = &[
+    r"Software\Classes\Directory\Background\shell\BobBaixa",
+    r"Software\Classes\DesktopBackground\Shell\BobBaixa",
+    r"Software\Classes\LibraryFolder\background\shell\BobBaixa",
+];
 
 pub fn url_from_link(arg: &str) -> Option<String> {
     let rest = arg.trim().trim_matches('"').strip_prefix("bobbaixa://")?;
@@ -154,7 +182,10 @@ pub fn parse_output_path(line: &str) -> Option<String> {
     ];
     for marker in MARKERS {
         if let Some(index) = line.find(marker) {
-            let rest = line[index + marker.len()..].trim().trim_end_matches('"').trim();
+            let rest = line[index + marker.len()..]
+                .trim()
+                .trim_end_matches('"')
+                .trim();
             if !rest.is_empty() {
                 return Some(rest.to_string());
             }
@@ -234,7 +265,11 @@ pub fn build_download_args(job: &crate::Job, ffmpeg_dir: &str) -> Vec<String> {
                 args.push(rate);
             }
         }
-    } else if let Some(id) = job.format_id.as_deref().filter(|id| !id.is_empty() && *id != "auto") {
+    } else if let Some(id) = job
+        .format_id
+        .as_deref()
+        .filter(|id| !id.is_empty() && *id != "auto")
+    {
         args.push("-f".into());
         args.push(format!("{id}+ba/{id}/b"));
         args.push("--merge-output-format".into());
@@ -275,7 +310,11 @@ pub fn build_download_args(job: &crate::Job, ffmpeg_dir: &str) -> Vec<String> {
         }
     }
     if job.embed_thumbnail {
-        args.extend(["--embed-thumbnail".into(), "--convert-thumbnails".into(), "jpg".into()]);
+        args.extend([
+            "--embed-thumbnail".into(),
+            "--convert-thumbnails".into(),
+            "jpg".into(),
+        ]);
     }
     if job.embed_metadata {
         args.push("--embed-metadata".into());
@@ -292,7 +331,10 @@ pub fn build_download_args(job: &crate::Job, ffmpeg_dir: &str) -> Vec<String> {
         args.push("--sponsorblock-remove".into());
         args.push(cats);
     }
-    if !job.cookies_browser.is_empty() && job.cookies_browser != "none" && job.cookies_browser != "auto" {
+    if !job.cookies_browser.is_empty()
+        && job.cookies_browser != "none"
+        && job.cookies_browser != "auto"
+    {
         args.push("--cookies-from-browser".into());
         args.push(job.cookies_browser.clone());
     }
@@ -311,10 +353,16 @@ pub fn format_selector(quality: &str, container: &str) -> (String, Option<String
         "360" => Some(360),
         _ => None,
     };
-    let filter = height.map(|value| format!("[height<={value}]")).unwrap_or_default();
+    let filter = height
+        .map(|value| format!("[height<={value}]"))
+        .unwrap_or_default();
     let selector = match container {
-        "webm" => format!("bv*{filter}[ext=webm]+ba[ext=webm]/b{filter}[ext=webm]/bv*{filter}+ba/b{filter}"),
-        "mp4" => format!("bv*{filter}[ext=mp4]+ba[ext=m4a]/b{filter}[ext=mp4]/bv*{filter}+ba/b{filter}"),
+        "webm" => format!(
+            "bv*{filter}[ext=webm]+ba[ext=webm]/b{filter}[ext=webm]/bv*{filter}+ba/b{filter}"
+        ),
+        "mp4" => {
+            format!("bv*{filter}[ext=mp4]+ba[ext=m4a]/b{filter}[ext=mp4]/bv*{filter}+ba/b{filter}")
+        }
         _ => format!("bv*{filter}+ba/b{filter}"),
     };
     let merge = if container == "mp4" || container == "mkv" || container == "webm" {
@@ -336,9 +384,27 @@ pub fn ffmpeg_args(input: &str, output: &str, preset: &str, bitrate: &str) -> Ve
         "-nostats".into(),
     ];
     match preset {
-        "mp3" => args.extend(["-vn".into(), "-c:a".into(), "libmp3lame".into(), "-b:a".into(), rate]),
-        "m4a" => args.extend(["-vn".into(), "-c:a".into(), "aac".into(), "-b:a".into(), rate]),
-        "opus" => args.extend(["-vn".into(), "-c:a".into(), "libopus".into(), "-b:a".into(), rate]),
+        "mp3" => args.extend([
+            "-vn".into(),
+            "-c:a".into(),
+            "libmp3lame".into(),
+            "-b:a".into(),
+            rate,
+        ]),
+        "m4a" => args.extend([
+            "-vn".into(),
+            "-c:a".into(),
+            "aac".into(),
+            "-b:a".into(),
+            rate,
+        ]),
+        "opus" => args.extend([
+            "-vn".into(),
+            "-c:a".into(),
+            "libopus".into(),
+            "-b:a".into(),
+            rate,
+        ]),
         "flac" => args.extend(["-vn".into(), "-c:a".into(), "flac".into()]),
         "webm" => args.extend([
             "-c:v".into(),
@@ -378,7 +444,11 @@ pub fn output_for(input: &str, preset: &str, folder: &str) -> String {
         "mp3" | "m4a" | "opus" | "flac" | "webm" => preset,
         _ => "mp4",
     };
-    let dir = if folder.trim().is_empty() { "." } else { folder.trim() };
+    let dir = if folder.trim().is_empty() {
+        "."
+    } else {
+        folder.trim()
+    };
     format!("{dir}/{stem}.{ext}")
 }
 
@@ -487,7 +557,10 @@ fn formats_of(value: &Value) -> Vec<FormatOption> {
             continue;
         }
         let label = format!("{height}p · {ext}");
-        if formats.iter().any(|item: &FormatOption| item.label == label) {
+        if formats
+            .iter()
+            .any(|item: &FormatOption| item.label == label)
+        {
             continue;
         }
         formats.push(FormatOption {
@@ -511,7 +584,9 @@ fn entry_url(entry: &Value, source_url: &str, id: &str) -> String {
             }
         }
     }
-    if !id.is_empty() && (source_url.contains("youtu") || string(entry, "ie_key").as_deref() == Some("Youtube")) {
+    if !id.is_empty()
+        && (source_url.contains("youtu") || string(entry, "ie_key").as_deref() == Some("Youtube"))
+    {
         return format!("https://www.youtube.com/watch?v={id}");
     }
     string(entry, "url").unwrap_or_default()
@@ -546,14 +621,22 @@ fn thumb(value: &Value) -> Option<String> {
 
 fn youtube_id(value: Option<&str>) -> Option<String> {
     let value = value?.trim();
-    if value.len() == 11 && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if value.len() == 11
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Some(value.to_string());
     }
     for marker in ["v=", "youtu.be/", "/shorts/", "/embed/", "/vi/"] {
         if let Some(start) = value.find(marker) {
             let id = &value[start + marker.len()..];
             let id: String = id.chars().take(11).collect();
-            if id.len() == 11 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            if id.len() == 11
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
                 return Some(id);
             }
         }
@@ -562,16 +645,14 @@ fn youtube_id(value: Option<&str>) -> Option<String> {
 }
 
 pub fn parse_json_value_text(text: &str) -> Result<Value, String> {
-    let start = text
-        .find(['{', '['])
-        .ok_or_else(|| {
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                "resposta vazia".into()
-            } else {
-                trimmed.chars().take(500).collect::<String>()
-            }
-        })?;
+    let start = text.find(['{', '[']).ok_or_else(|| {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            "resposta vazia".into()
+        } else {
+            trimmed.chars().take(500).collect::<String>()
+        }
+    })?;
     serde_json::from_str(&text[start..]).map_err(|error| error.to_string())
 }
 
@@ -616,7 +697,11 @@ pub fn looks_like_extractor(message: &str) -> bool {
 }
 
 pub fn cookie_lock_hint(language: &str) -> String {
-    crate::text(language, "feche o navegador e tente de novo.", "close the browser and try again.")
+    crate::text(
+        language,
+        "feche o navegador e tente de novo.",
+        "close the browser and try again.",
+    )
 }
 
 pub fn pick_browser(preference: &str, detected: &[String]) -> Option<String> {
@@ -670,15 +755,21 @@ pub fn detect_browsers_in(
         mark("opera", config.join("opera"));
         mark("firefox", home.join(".mozilla/firefox"));
     }
-    ["chrome", "edge", "brave", "firefox", "opera", "vivaldi", "chromium"]
-        .into_iter()
-        .filter(|id| found.iter().any(|item| item == id))
-        .map(str::to_string)
-        .collect()
+    [
+        "chrome", "edge", "brave", "firefox", "opera", "vivaldi", "chromium",
+    ]
+    .into_iter()
+    .filter(|id| found.iter().any(|item| item == id))
+    .map(str::to_string)
+    .collect()
 }
 
 fn string(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(Value::as_str).map(str::to_string).filter(|s| !s.is_empty())
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
 }
 
 fn parse_u64(value: &str) -> Option<u64> {
@@ -694,7 +785,10 @@ fn parse_f64(value: &str) -> Option<f64> {
     if value.is_empty() || value == "NA" || value == "None" {
         return None;
     }
-    value.parse::<f64>().ok().filter(|n| n.is_finite() && *n >= 0.0)
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|n| n.is_finite() && *n >= 0.0)
 }
 
 #[cfg(test)]
@@ -734,8 +828,15 @@ mod tests {
 
     #[test]
     fn extracts_many_urls() {
-        let urls = extract_urls("veja https://youtu.be/a, e\nhttps://youtu.be/a https://example.com/b.");
-        assert_eq!(urls, vec!["https://youtu.be/a".to_string(), "https://example.com/b".to_string()]);
+        let urls =
+            extract_urls("veja https://youtu.be/a, e\nhttps://youtu.be/a https://example.com/b.");
+        assert_eq!(
+            urls,
+            vec![
+                "https://youtu.be/a".to_string(),
+                "https://example.com/b".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -754,6 +855,20 @@ mod tests {
         assert!(normalize_rate("rápido").is_none());
         let url = url_from_link("bobbaixa://download?url=https%3A%2F%2Fyoutu.be%2Fabc").unwrap();
         assert_eq!(url, "https://youtu.be/abc");
+        assert!(is_clipboard_launch("--clipboard"));
+        assert!(is_clipboard_launch("bobbaixa://clipboard/"));
+        assert!(!is_clipboard_launch(
+            "bobbaixa://download?url=https%3A%2F%2Fyoutu.be%2Fabc"
+        ));
+        assert_eq!(
+            context_menu_label("pt"),
+            "baixar link copiado com bob baixa"
+        );
+        assert_eq!(
+            context_menu_command(r"C:\Users\ana\AppData\Local\bob baixa\bob-baixa.exe"),
+            r#""C:\Users\ana\AppData\Local\bob baixa\bob-baixa.exe" --clipboard"#
+        );
+        assert_eq!(CONTEXT_MENU_KEYS.len(), 3);
     }
 
     #[test]
@@ -763,7 +878,10 @@ mod tests {
         assert_eq!(progress.downloaded, 500);
         assert_eq!(progress.total, Some(1000));
         assert!((progress.fraction - 0.5).abs() < 0.001);
-        assert_eq!(parse_output_path("VIDIPATH:C:/v.mp4").as_deref(), Some("C:/v.mp4"));
+        assert_eq!(
+            parse_output_path("VIDIPATH:C:/v.mp4").as_deref(),
+            Some("C:/v.mp4")
+        );
         assert_eq!(
             parse_output_path("[Merger] Merging formats into \"C:/out.mkv\"").as_deref(),
             Some("C:/out.mkv")
@@ -851,14 +969,28 @@ mod tests {
             }]
         });
         let list = parse_media(&playlist, "https://www.youtube.com/playlist?list=PL1");
-        assert_eq!(list.entries[0].thumbnail.as_deref(), Some("https://i.ytimg.com/vi/YF4wa9gB0cA/hqdefault.jpg"));
-        let bare = serde_json::json!({"id": "dQw4w9WgXcQ", "title": "sem capa", "url": "dQw4w9WgXcQ"});
+        assert_eq!(
+            list.entries[0].thumbnail.as_deref(),
+            Some("https://i.ytimg.com/vi/YF4wa9gB0cA/hqdefault.jpg")
+        );
+        let bare =
+            serde_json::json!({"id": "dQw4w9WgXcQ", "title": "sem capa", "url": "dQw4w9WgXcQ"});
         let hit = parse_search(&serde_json::json!({"entries": [bare]}));
-        assert_eq!(hit[0].thumbnail.as_deref(), Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"));
+        assert_eq!(
+            hit[0].thumbnail.as_deref(),
+            Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg")
+        );
         assert!(looks_like_auth("ERROR: Sign in to confirm your age"));
-        assert!(looks_like_extractor("ERROR: unable to extract player response"));
-        assert!(looks_like_cookie_lock("failed to copy cookie database: database is locked"));
-        assert_eq!(pick_browser("auto", &["edge".into()]).as_deref(), Some("edge"));
+        assert!(looks_like_extractor(
+            "ERROR: unable to extract player response"
+        ));
+        assert!(looks_like_cookie_lock(
+            "failed to copy cookie database: database is locked"
+        ));
+        assert_eq!(
+            pick_browser("auto", &["edge".into()]).as_deref(),
+            Some("edge")
+        );
         assert_eq!(pick_browser("none", &["chrome".into()]), None);
         let mut job = sample_job();
         job.cookies_browser = "auto".into();
@@ -877,6 +1009,9 @@ mod tests {
         let mp4 = ffmpeg_args("in.mkv", "out.mp4", "mp4", "128k").join(" ");
         assert!(mp4.contains("libx264"));
         assert!(mp4.contains("-crf 28"));
-        assert_eq!(output_for("C:/Videos/ensaio.mkv", "mp3", "C:/out"), "C:/out/ensaio.mp3");
+        assert_eq!(
+            output_for("C:/Videos/ensaio.mkv", "mp3", "C:/out"),
+            "C:/out/ensaio.mp3"
+        );
     }
 }

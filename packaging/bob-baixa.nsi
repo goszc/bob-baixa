@@ -70,7 +70,7 @@ Section "bob baixa" SecApp
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "DisplayIcon" "$INSTDIR\bob-baixa.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "Publisher" "bob baixa"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "DisplayVersion" "1.0.0"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "DisplayVersion" "0.2.0"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "NoRepair" 1
   WriteRegStr HKCU "Software\bob baixa" "InstallDir" "$INSTDIR"
@@ -97,6 +97,9 @@ Section "Uninstall"
   RMDir "$SMPROGRAMS\bob baixa"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa"
   DeleteRegKey HKCU "Software\Classes\bobbaixa"
+  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\BobBaixa"
+  DeleteRegKey HKCU "Software\Classes\DesktopBackground\Shell\BobBaixa"
+  DeleteRegKey HKCU "Software\Classes\LibraryFolder\background\shell\BobBaixa"
   DeleteRegKey HKCU "Software\bob baixa"
   RMDir "$INSTDIR"
 SectionEnd

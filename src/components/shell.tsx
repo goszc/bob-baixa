@@ -2,8 +2,8 @@ import type { ReactNode } from "react"
 import { translate, type Key } from "../lib/i18n"
 import type { Page, ToolPhase } from "../lib/types"
 import { cn } from "../lib/cn"
-import { applyUpdate, closeConfirm, go, useApp, useT } from "../store"
-import { ConfirmDialog } from "./ui/dialog"
+import { applyUpdate, closeConfirm, dismissNotes, go, useApp, useT } from "../store"
+import { ConfirmDialog, NotesDialog } from "./ui/dialog"
 import { Logo } from "./logo"
 
 const NAV: { id: Page; key: Key }[] = [
@@ -110,6 +110,13 @@ export function Shell({ children }: { children: ReactNode }) {
           {app.toast}
         </div>
       ) : null}
+      <NotesDialog
+        open={app.showNotes}
+        title={t("whats_new")}
+        body={app.releaseNotes.trim() || t("notes_fallback")}
+        close={t("whats_new_close")}
+        onClose={() => void dismissNotes()}
+      />
       <ConfirmDialog
         open={app.confirm !== null}
         title={app.confirm?.title ?? ""}

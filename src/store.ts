@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from "react"
 import { applyWindowTheme, chooseFile, chooseFolder, errorText, invoke, isTauri, listenBob, readTextFile, revealPath } from "./lib/api"
 import { extractUrls, isMediaPath, isTextPath, isTime, nextIsoFromClock } from "./lib/format"
+import { presetFromConfig, presetPatch } from "./lib/presets"
+import type { DownloadPreset } from "./lib/types"
 import { translate, type Key } from "./lib/i18n"
 import { cachedThumbs, previewAnalyzed, previewHistory, previewHits, previewJobs, previewWatches } from "./lib/preview"
 import {
@@ -59,6 +61,9 @@ export interface AppState {
   expandedJob: string | null
   dragging: boolean
   updateOffer: boolean
+  whatsNew: boolean
+  showNotes: boolean
+  releaseNotes: string
 }
 
 const previewMode =
@@ -101,6 +106,9 @@ function emptyState(): AppState {
     expandedJob: null,
     dragging: false,
     updateOffer: false,
+    whatsNew: false,
+    showNotes: false,
+    releaseNotes: "",
   }
 }
 
@@ -134,6 +142,8 @@ const seenClipboard = new Set<string>()
 const mockTimers = new Map<string, number>()
 let toastTimer = 0
 let booted = false
+let hydrated = !isTauri()
+let pendingPatch: Partial<Config> | null = null
 
 function emit() {
   listeners.forEach((listener) => listener())
@@ -363,19 +373,33 @@ function runMock(id: string) {
       mockTimers.delete(id)
       pushHistory(next, true)
       say("done_toast")
+      pumpMock()
     }
   }, 450)
   mockTimers.set(id, timer)
 }
 
-function releaseMock(id: string) {
-  window.setTimeout(() => {
-    setState((current) => ({
-      ...current,
-      jobs: current.jobs.map((job) => (job.id === id && job.state === "queued" ? { ...job, state: "downloading" } : job)),
-    }))
-    runMock(id)
-  }, 350)
+function pumpMock() {
+  if (isTauri()) return
+  const parallel = Math.min(4, Math.max(1, getState().config.parallel || 2))
+  const jobs = getState().jobs
+  let slots = parallel - jobs.filter((job) => job.state === "downloading").length
+  if (slots <= 0) return
+  const starting: string[] = []
+  for (let index = jobs.length - 1; index >= 0 && slots > 0; index -= 1) {
+    const job = jobs[index]
+    if (job.state === "queued") {
+      starting.push(job.id)
+      slots -= 1
+    }
+  }
+  if (!starting.length) return
+  const chosen = new Set(starting)
+  setState((current) => ({
+    ...current,
+    jobs: current.jobs.map((job) => (chosen.has(job.id) && job.state === "queued" ? { ...job, state: "downloading" } : job)),
+  }))
+  for (const id of starting) runMock(id)
 }
 
 export async function enqueueItems(items: EnqueueItem[]) {
@@ -388,9 +412,7 @@ export async function enqueueItems(items: EnqueueItem[]) {
   const jobs = items.map(mockJob)
   setState((current) => ({ ...current, jobs: [...jobs, ...current.jobs] }))
   say(items.length > 1 ? "added_n" : "added", { n: items.length })
-  for (const job of jobs) {
-    if (job.state === "queued") releaseMock(job.id)
-  }
+  pumpMock()
 }
 
 async function considerEnqueue(items: EnqueueItem[]) {
@@ -495,6 +517,7 @@ export async function jobAction(id: string, action: "pause" | "resume" | "cancel
   if (action === "remove") {
     window.clearInterval(mockTimers.get(id))
     setState((current) => ({ ...current, jobs: current.jobs.filter((job) => job.id !== id) }))
+    pumpMock()
     return
   }
   setState((current) => ({
@@ -503,12 +526,13 @@ export async function jobAction(id: string, action: "pause" | "resume" | "cancel
       if (job.id !== id) return job
       if (action === "pause") return { ...job, state: "paused" }
       if (action === "cancel") return { ...job, state: "cancelled" }
-      if (action === "resume" || action === "retry") return { ...job, state: "downloading", error: undefined, progress: action === "retry" ? 0 : job.progress }
+      if (action === "resume") return { ...job, state: "queued", error: undefined }
+      if (action === "retry") return { ...job, state: "queued", error: undefined, progress: 0, speed: undefined, eta: undefined }
       return job
     }),
   }))
   if (action === "pause" || action === "cancel") window.clearInterval(mockTimers.get(id))
-  if (action === "resume" || action === "retry") runMock(id)
+  pumpMock()
 }
 
 export async function scheduleQueue() {
@@ -529,11 +553,7 @@ export async function clearSchedule() {
     scheduleAt: null,
     jobs: current.jobs.map((job) => (job.state === "scheduled" ? { ...job, state: "queued", scheduledAt: undefined } : job)),
   }))
-  if (!isTauri()) {
-    for (const job of getState().jobs) {
-      if (job.state === "queued") releaseMock(job.id)
-    }
-  }
+  if (!isTauri()) pumpMock()
 }
 
 export async function runSearch() {
@@ -679,14 +699,90 @@ export function closeConfirm() {
 }
 
 export function setConfig(patch: Partial<Config>) {
-  let themeGlass = patch.themeGlass ?? getState().config.themeGlass
+  const previous = getState().config
+  let themeGlass = patch.themeGlass ?? previous.themeGlass
   if (patch.theme === "light" || patch.theme === "dark") themeGlass = false
   if (patch.theme === "glass-light" || patch.theme === "glass-dark") themeGlass = true
-  const config = { ...getState().config, ...patch, themeGlass }
+  const config = { ...previous, ...patch, themeGlass }
   setState({ config })
   if (patch.theme || patch.themeGlass !== undefined) applyTheme(config.theme, config.themeGlass)
   if (patch.language) localStorage.setItem("bob-baixa-lang", patch.language)
-  if (isTauri()) void invoke("set_config", { config })
+  if (!isTauri()) {
+    if (patch.parallel !== undefined) pumpMock()
+    return
+  }
+  if (!hydrated) {
+    pendingPatch = { ...(pendingPatch ?? {}), ...patch }
+    return
+  }
+  void persistConfig(config, previous)
+}
+
+async function persistConfig(config: Config, previous: Config) {
+  try {
+    await invoke("set_config", { config })
+  } catch (error) {
+    setState({ config: previous, error: errorText(error) })
+    applyTheme(previous.theme, previous.themeGlass)
+  }
+}
+
+export function applyPreset(preset: DownloadPreset) {
+  setConfig(presetPatch(preset))
+}
+
+export function savePreset(name: string) {
+  const trimmed = name.trim().slice(0, 40)
+  if (!trimmed) {
+    setState({ error: translate(lang(), "preset_need_name") })
+    return
+  }
+  const config = getState().config
+  if (config.presets.length >= 24) return
+  const preset = presetFromConfig(config, nid(), trimmed)
+  setState({ error: null })
+  setConfig({ presets: [preset, ...config.presets] })
+}
+
+export function updatePreset(id: string) {
+  const config = getState().config
+  const current = config.presets.find((preset) => preset.id === id)
+  if (!current) return
+  setConfig({
+    presets: config.presets.map((preset) => (preset.id === id ? presetFromConfig(config, preset.id, preset.name) : preset)),
+  })
+}
+
+export function renamePreset(id: string, name: string) {
+  const trimmed = name.trim().slice(0, 40)
+  if (!trimmed) {
+    setState({ error: translate(lang(), "preset_need_name") })
+    return
+  }
+  setState({ error: null })
+  setConfig({
+    presets: getState().config.presets.map((preset) => (preset.id === id ? { ...preset, name: trimmed } : preset)),
+  })
+}
+
+export function deletePreset(id: string) {
+  setConfig({ presets: getState().config.presets.filter((preset) => preset.id !== id) })
+}
+
+export function openNotes() {
+  setState({ showNotes: true })
+}
+
+export async function dismissNotes() {
+  const ack = getState().whatsNew
+  const version = getState().tools.appVersion || "0.2.0"
+  setState((current) => ({
+    ...current,
+    showNotes: false,
+    whatsNew: false,
+    config: ack ? { ...current.config, seenVersion: version } : current.config,
+  }))
+  if (ack && isTauri()) await invoke("ack_whats_new")
 }
 
 export async function pickFolder() {
@@ -888,27 +984,47 @@ export function initApp() {
   })
   if (!isTauri()) return
   void listenBob<BobEvent>(applyEvent)
-  void invoke<{
-    config: Config
-    jobs: Job[]
-    history: HistoryEntry[]
-    watches: Watch[]
-    tools: ToolStatus
-    scheduleAt?: string | null
-    convertJob?: ConvertJob | null
-  }>("state").then((snapshot) => {
+  void (async () => {
+    type Snapshot = {
+      config: Config
+      jobs: Job[]
+      history: HistoryEntry[]
+      watches: Watch[]
+      tools: ToolStatus
+      scheduleAt?: string | null
+      convertJob?: ConvertJob | null
+      ready?: boolean
+      whatsNew?: boolean
+      releaseNotes?: string
+    }
+    const started = Date.now()
+    let snapshot: Snapshot | null = null
+    while (Date.now() - started < 4000) {
+      snapshot = await invoke<Snapshot>("state")
+      if (snapshot.ready) break
+      await new Promise((resolve) => window.setTimeout(resolve, 40))
+    }
+    if (!snapshot) return
+    const loaded = snapshot
     setState((current) => ({
       ...current,
-      config: snapshot.config,
-      jobs: snapshot.jobs,
-      history: snapshot.history,
-      watches: snapshot.watches,
-      tools: snapshot.tools,
-      scheduleAt: snapshot.scheduleAt ?? null,
-      convertJob: snapshot.convertJob ?? null,
+      config: loaded.config,
+      jobs: loaded.jobs,
+      history: loaded.history,
+      watches: loaded.watches,
+      tools: loaded.tools,
+      scheduleAt: loaded.scheduleAt ?? null,
+      convertJob: loaded.convertJob ?? null,
+      whatsNew: Boolean(loaded.whatsNew),
+      showNotes: Boolean(loaded.whatsNew),
+      releaseNotes: loaded.releaseNotes ?? "",
     }))
-    applyTheme(snapshot.config.theme)
-  })
+    applyTheme(loaded.config.theme, loaded.config.themeGlass)
+    hydrated = true
+    const patch = pendingPatch
+    pendingPatch = null
+    if (patch) setConfig(patch)
+  })()
   void bindDesktopDrag()
 }
 

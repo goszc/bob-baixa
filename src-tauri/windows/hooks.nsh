@@ -9,4 +9,7 @@
 !macro NSIS_HOOK_POSTUNINSTALL
   Delete "$DESKTOP\bob baixa.lnk"
   DeleteRegKey HKCU "Software\Classes\bobbaixa"
+  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\BobBaixa"
+  DeleteRegKey HKCU "Software\Classes\DesktopBackground\Shell\BobBaixa"
+  DeleteRegKey HKCU "Software\Classes\LibraryFolder\background\shell\BobBaixa"
 !macroend

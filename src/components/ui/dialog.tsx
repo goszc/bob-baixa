@@ -1,6 +1,37 @@
 import * as Dialog from "@radix-ui/react-dialog"
 import { Button } from "./button"
 
+export function NotesDialog({
+  open,
+  title,
+  body,
+  close,
+  onClose,
+}: {
+  open: boolean
+  title: string
+  body: string
+  close: string
+  onClose: () => void
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/25" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(460px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-surface p-6">
+          <Dialog.Title className="text-[16px] font-medium tracking-tight">{title}</Dialog.Title>
+          <Dialog.Description className="mt-4 max-h-[50vh] overflow-auto whitespace-pre-wrap text-[14px] leading-relaxed text-muted">
+            {body}
+          </Dialog.Description>
+          <div className="mt-6 flex justify-end">
+            <Button onClick={onClose}>{close}</Button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  )
+}
+
 export function ConfirmDialog({
   open,
   title,

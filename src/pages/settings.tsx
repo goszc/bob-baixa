@@ -8,7 +8,7 @@ import { Switch } from "../components/ui/switch"
 import type { Key } from "../lib/i18n"
 import { cn } from "../lib/cn"
 import type { CookiesBrowser, Lang, ThemeMode } from "../lib/types"
-import { checkUpdates, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
+import { checkUpdates, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
 
 const CATS: { id: string; key: Key }[] = [
   { id: "sponsor", key: "cat_sponsor" },
@@ -67,7 +67,7 @@ export function Settings() {
         </div>
       </Section>
       <Section title={t("queue_settings")}>
-        <Row label={t("parallel")}>
+        <Row label={t("parallel")} hint={t("parallel_hint")}>
           <Segmented
             value={String(config.parallel)}
             onChange={(value) => setConfig({ parallel: Number(value) })}
@@ -88,6 +88,9 @@ export function Settings() {
         </Row>
         <Row label={t("hotkey")} hint={t("hotkey_help")}>
           <Switch label={t("hotkey")} checked={config.hotkey} onCheckedChange={(value) => setConfig({ hotkey: value })} />
+        </Row>
+        <Row label={t("context_menu")} hint={t("context_menu_hint")}>
+          <Switch label={t("context_menu")} checked={config.contextMenu} onCheckedChange={(value) => setConfig({ contextMenu: value })} />
         </Row>
       </Section>
       <Section title={t("subs_extras")}>
@@ -153,7 +156,7 @@ export function Settings() {
       <Section title={t("tools")}>
         <p className="py-3 text-[13px] leading-relaxed text-muted">{t("tools_hint")}</p>
         <p className="pb-3 text-[13px] text-muted">
-          bob baixa · {app.tools.appVersion ?? "1.0.0"}
+          bob baixa · {app.tools.appVersion ?? "0.2.0"}
           <br />
           yt-dlp {app.tools.ytdlpVersion ? `· ${app.tools.ytdlpVersion}` : `· ${t("tools_missing")}`}
           <br />
@@ -181,6 +184,11 @@ export function Settings() {
       </Section>
       <Section title={t("about")}>
         <p className="py-3 text-[14px]">bob baixa · {t("version")}</p>
+        <div className="pb-4">
+          <Button variant="outline" onClick={openNotes}>
+            {t("whats_new")}
+          </Button>
+        </div>
         <p className="max-w-[52ch] pb-2 text-[13px] leading-relaxed text-muted">{t("extension_hint")}</p>
         <p className="max-w-[52ch] pb-4 text-[13px] leading-relaxed text-muted">{t("protocol")}</p>
       </Section>
