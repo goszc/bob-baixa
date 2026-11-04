@@ -6,6 +6,9 @@ on:
     branches: [main]
     tags: ["v*"]
 
+permissions:
+  contents: write
+
 jobs:
   installer:
     runs-on: windows-latest
@@ -22,7 +25,8 @@ jobs:
       - name: build the windows exe
         run: npm run tauri build -- --no-bundle
       - name: installer
-        run: makensis /DEXE=target\release\bob-baixa.exe /DEXTDIR=extension /DICON=src-tauri\icons\icon.ico packaging\bob-baixa.nsi
+        working-directory: packaging
+        run: makensis /DEXE=..\target\release\bob-baixa.exe /DEXTDIR=..\extension /DICON=..\src-tauri\icons\icon.ico bob-baixa.nsi
       - name: sign and write the update manifest
         shell: bash
         env:
@@ -32,6 +36,9 @@ jobs:
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "segredo TAURI_SIGNING_PRIVATE_KEY ausente. o instalador sai sem manifesto assinado."
             exit 0
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            unset TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           fi
           npx tauri signer sign packaging/bob-baixa-setup.exe
           node scripts/write-latest-json.mjs

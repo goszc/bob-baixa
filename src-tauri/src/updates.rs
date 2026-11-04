@@ -224,12 +224,14 @@ fn verify(bytes: &[u8], signature: &str) -> Result<(), String> {
     key.verify(bytes, &signature, false).map_err(|error| error.to_string())
 }
 
+const UPDATE_ENDPOINT: &str = "https://github.com/goszc/bob-baixa/releases/latest/download/latest.json";
+
 fn endpoint(config: &Config) -> String {
     let custom = config.update_url.trim();
     if !custom.is_empty() {
         return custom.to_string();
     }
-    option_env!("BOB_UPDATE_URL").unwrap_or("").trim().to_string()
+    UPDATE_ENDPOINT.to_string()
 }
 
 fn newer(remote: &str, current: &str) -> bool {
