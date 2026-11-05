@@ -1,5 +1,9 @@
 # changelog
 
+## 0.4.1
+
+- a biblioteca lista mp3, mp4 e os outros formatos que o player toca que já estão na pasta, também em subpastas. no windows a varredura gravava o caminho com `\\?\` e a lista ficava vazia
+
 ## 0.4.0
 
 - modo econômico: um toque baixa só o áudio em opus a cerca de 24 kbps, perto de 0,5 MB numa faixa de três minutos. faixas longas podem passar disso e soar como rádio. o mp4 continua nas outras predefinições e na busca
