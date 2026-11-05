@@ -5,7 +5,7 @@ import { Scrubber } from "../components/scrubber"
 import { Thumb } from "../components/thumb"
 import { LibraryPanel } from "../components/library-panel"
 import { isTauri } from "../lib/api"
-import { catalogTracks, refreshCatalog, useCatalog } from "../lib/catalog"
+import { catalogTracks, refreshCatalog, useCatalog, useCatalogSettled } from "../lib/catalog"
 import { formatClock } from "../lib/format"
 import type { Key } from "../lib/i18n"
 import type { Track } from "../lib/library"
@@ -31,7 +31,7 @@ import {
   toggleShuffle,
   usePlayer,
 } from "../lib/player"
-import { openOutput, useApp, useT } from "../store"
+import { getState, openOutput, useApp, useT } from "../store"
 
 const SOURCE_KEY: Record<string, Key> = {
   embedded: "lyrics_source_embedded",
@@ -167,12 +167,14 @@ export function Player() {
   const t = useT()
   const [query, setQuery] = useState("")
   const disk = useCatalog()
+  const settled = useCatalogSettled()
   const library = useMemo(
     () => catalogTracks(app.jobs, app.history, app.convertJob, app.config.outputDir),
     [app.jobs, app.history, app.convertJob, app.config.outputDir, disk],
   )
+  const pending = !settled && library.length === 0
   useEffect(() => {
-    void refreshCatalog()
+    void refreshCatalog(app.config.outputDir, () => getState().config.outputDir)
   }, [app.config.outputDir, app.history.length, app.jobs.length])
   useEffect(() => {
     restoreSession(library, disk !== null || !isTauri())
@@ -204,10 +206,10 @@ export function Player() {
           </div>
           <p className="mt-6 text-[12px] text-muted">{t("player_now")}</p>
           <h1 className="mt-1 truncate text-[28px] font-medium tracking-[-0.04em]">
-            {title || (library.length ? t("player_idle") : t("player_empty"))}
+            {title || (library.length ? t("player_idle") : pending ? t("searching") : t("player_empty"))}
           </h1>
           <p className="mt-1 truncate text-[15px] text-muted">
-            {artist || (track ? "\u00a0" : library.length ? t("player_queue_empty") : t("player_empty_hint"))}
+            {artist || (track ? "\u00a0" : library.length ? t("player_queue_empty") : pending ? "\u00a0" : t("player_empty_hint"))}
           </p>
           {player.error ? (
             <div className="mt-4">
@@ -279,6 +281,7 @@ export function Player() {
             {player.panel === "library" ? (
               <LibraryPanel
                 tracks={library}
+                pending={pending}
                 query={query}
                 onQuery={setQuery}
                 renderTrack={(item, onPlay) => (

@@ -22,8 +22,27 @@ pub struct ScannedMedia {
     pub modified_ms: u64,
 }
 
+/// `\\?\C:\...` and `\\?\UNC\...` are the same folder as the path without that prefix.
+pub fn strip_verbatim(path: &str) -> String {
+    let text = path.trim();
+    let lower = text.to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix(r"\\?\unc\").map(|_| &text[8..]) {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = lower.strip_prefix("//?/unc/").map(|_| &text[8..]) {
+        return format!("//{rest}");
+    }
+    if lower.starts_with(r"\\?\") {
+        return text[4..].to_string();
+    }
+    if lower.starts_with("//?/") {
+        return text[4..].to_string();
+    }
+    text.to_string()
+}
+
 pub fn normalize_path_key(path: &str) -> String {
-    path.trim()
+    strip_verbatim(path)
         .replace('\\', "/")
         .split('/')
         .filter(|part| !part.is_empty())
@@ -99,16 +118,19 @@ pub fn playlist_output_dir(root: &str, title: &str) -> String {
     format!("{root}/{name}")
 }
 
-/// Walk the download folder. Files outside the canonical root are ignored.
+/// Walk the download folder the user configured.
+///
+/// On Windows, `canonicalize` rewrites a path to `\\?\...` and may also resolve a
+/// folder junction. Those strings no longer match `outputDir`, so every playable
+/// file (mp3 and mp4 alike) was dropped and the library stayed empty.
 pub fn scan_media_dir(root: &Path) -> Vec<ScannedMedia> {
-    let Ok(root) = root.canonicalize() else {
-        return Vec::new();
-    };
+    let root = configured_root(root);
     if !root.is_dir() {
         return Vec::new();
     }
+    let canonical_root = root.canonicalize().ok();
     let mut out = Vec::new();
-    walk(&root, &root, 0, &mut out);
+    walk(&root, &root, canonical_root.as_deref(), 0, &mut out);
     out.sort_by(|left, right| {
         left.title
             .to_lowercase()
@@ -118,7 +140,19 @@ pub fn scan_media_dir(root: &Path) -> Vec<ScannedMedia> {
     out
 }
 
-fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<ScannedMedia>) {
+fn configured_root(root: &Path) -> PathBuf {
+    let text = strip_verbatim(&root.to_string_lossy());
+    let trimmed = text.trim();
+    let keep_drive = trimmed.len() <= 3 && trimmed.as_bytes().get(1) == Some(&b':');
+    let text = if keep_drive {
+        trimmed.to_string()
+    } else {
+        trimmed.trim_end_matches(['/', '\\']).to_string()
+    };
+    PathBuf::from(text)
+}
+
+fn walk(root: &Path, dir: &Path, canonical_root: Option<&Path>, depth: usize, out: &mut Vec<ScannedMedia>) {
     if depth > 8 || out.len() >= 5000 {
         return;
     }
@@ -130,23 +164,40 @@ fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<ScannedMedia>) {
             return;
         }
         let path = entry.path();
-        let Ok(meta) = entry.metadata() else {
+        let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        if meta.is_dir() {
-            walk(root, &path, depth + 1, out);
+        if file_type.is_symlink() {
+            let Ok(meta) = std::fs::metadata(&path) else {
+                continue;
+            };
+            if !meta.is_file() || !is_playable_media(&path) || escapes(canonical_root, &path) {
+                continue;
+            }
+            out.push(describe(root, &path, meta.len(), modified_ms(&meta)));
             continue;
         }
-        if !meta.is_file() || !is_playable_media(&path) {
+        if file_type.is_dir() {
+            walk(root, &path, canonical_root, depth + 1, out);
             continue;
         }
-        let Ok(canon) = path.canonicalize() else {
-            continue;
-        };
-        if !canon.starts_with(root) || canon == *root {
+        if !file_type.is_file() || !is_playable_media(&path) {
             continue;
         }
-        out.push(describe(root, &canon, meta.len(), modified_ms(&meta)));
+        let meta = entry.metadata().ok();
+        let size = meta.as_ref().map(|item| item.len()).unwrap_or(0);
+        let modified = meta.as_ref().map(modified_ms).unwrap_or(0);
+        out.push(describe(root, &path, size, modified));
+    }
+}
+
+fn escapes(canonical_root: Option<&Path>, file: &Path) -> bool {
+    let Some(root) = canonical_root else {
+        return false;
+    };
+    match file.canonicalize() {
+        Ok(canon) => !canon.starts_with(root),
+        Err(_) => true,
     }
 }
 
@@ -297,6 +348,34 @@ mod tests {
         assert!(!string_inside("C:/Music", "C:/Music"));
         assert!(!string_inside("", "C:/Music/a.mp3"));
         assert!(same_path(r"C:\A\B.mp3", "c:/a/b.mp3"));
+        assert!(string_inside(
+            r"C:\Users\Gustavo\Downloads\bob baixa",
+            r"\\?\C:\Users\Gustavo\Downloads\bob baixa\Don't Be so Serious [D56XxiS_pJ0].mp4"
+        ));
+        assert!(string_inside(
+            r"\\?\C:\Users\Gustavo\Downloads\bob",
+            r"C:\Users\Gustavo\Downloads\bob\faixa.mp3"
+        ));
+        assert!(!string_inside(
+            r"C:\Users\Gustavo\Downloads\bob",
+            r"\\?\C:\Users\Gustavo\Downloads\bob extra\a.mp4"
+        ));
+        assert!(string_inside(
+            r"\\server\share\bob",
+            r"\\?\UNC\server\share\bob\clipe.mp4"
+        ));
+        assert!(same_path(
+            r"\\?\C:\Users\Gustavo\Downloads\bob\a.mp3",
+            r"C:\Users\Gustavo\Downloads\bob\a.mp3"
+        ));
+        assert_eq!(
+            strip_verbatim(r"\\?\C:\Users\Gustavo\Downloads\bob baixa\a.mp4"),
+            r"C:\Users\Gustavo\Downloads\bob baixa\a.mp4"
+        );
+        assert_eq!(
+            strip_verbatim(r"\\?\UNC\server\share\a.mp3"),
+            r"\\server\share\a.mp3"
+        );
     }
 
     #[test]
@@ -323,14 +402,47 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join("nota.txt"), b"x").unwrap();
+        std::fs::write(dir.join("Clip [abcdefghijk].mp4"), b"v").unwrap();
+        let found = scan_media_dir(&dir);
+        let root = dir.to_string_lossy().to_string();
+        assert!(found.iter().all(|item| item.path.starts_with(&root)));
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].title, "Clip");
+        assert_eq!(found[0].kind, "video");
+        assert_eq!(found[0].folder, "");
+        assert_eq!(found[1].artist, "Artist");
+        assert_eq!(found[1].title, "Song");
+        assert_eq!(found[1].folder, "Disco");
+        assert_eq!(found[1].album, "Disco");
+        assert_eq!(found[1].kind, "audio");
+        assert!(found[1].size > 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_folder_scans_as_empty() {
+        let dir = std::env::temp_dir().join(format!("bob-scan-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(scan_media_dir(&dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_skips_a_symlink_that_leaves_the_folder() {
+        let dir = std::env::temp_dir().join(format!("bob-scan-link-{}", std::process::id()));
+        let outside = std::env::temp_dir().join(format!("bob-scan-out-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("fora.mp3"), b"x").unwrap();
+        std::fs::write(dir.join("dentro.mp4"), b"v").unwrap();
+        std::os::unix::fs::symlink(outside.join("fora.mp3"), dir.join("atalho.mp3")).unwrap();
         let found = scan_media_dir(&dir);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].artist, "Artist");
-        assert_eq!(found[0].title, "Song");
-        assert_eq!(found[0].folder, "Disco");
-        assert_eq!(found[0].album, "Disco");
-        assert_eq!(found[0].kind, "audio");
-        assert!(found[0].size > 0);
+        assert!(found[0].path.ends_with("dentro.mp4"));
+        assert_eq!(found[0].kind, "video");
         let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 }

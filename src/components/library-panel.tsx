@@ -41,11 +41,13 @@ const VIEWS: { value: LibraryView; key: "player_tracks" | "player_artists" | "pl
 
 export function LibraryPanel({
   tracks,
+  pending = false,
   query,
   onQuery,
   renderTrack,
 }: {
   tracks: Track[]
+  pending?: boolean
   query: string
   onQuery: (value: string) => void
   renderTrack: (track: Track, onPlay: () => void) => ReactNode
@@ -143,8 +145,14 @@ export function LibraryPanel({
             ))
           ) : (
             <div className="px-2 py-8">
-              <p className="text-[15px]">{tracks.length === 0 ? t("player_empty") : t("no_results")}</p>
-              {tracks.length === 0 ? <p className="mt-2 text-[13px] text-muted">{t("player_empty_hint")}</p> : null}
+              {pending && tracks.length === 0 ? (
+                <p className="text-[15px] text-muted">{t("searching")}</p>
+              ) : (
+                <>
+                  <p className="text-[15px]">{tracks.length === 0 ? t("player_empty") : t("no_results")}</p>
+                  {tracks.length === 0 ? <p className="mt-2 text-[13px] text-muted">{t("player_empty_hint")}</p> : null}
+                </>
+              )}
             </div>
           )
         ) : null}

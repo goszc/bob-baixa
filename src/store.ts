@@ -678,7 +678,7 @@ async function performDelete(path: string) {
   if (!isTauri()) return
   try {
     await invoke("delete_library_track", { path })
-    await refreshCatalog()
+    await refreshCatalog(getState().config.outputDir, () => getState().config.outputDir)
   } catch (error) {
     unmarkRemoved(path)
     setState({ history: previous.history, jobs: previous.jobs, error: errorText(error) })
@@ -820,6 +820,9 @@ export function setConfig(patch: Partial<Config>) {
   setState({ config })
   if (patch.theme || patch.themeGlass !== undefined) applyTheme(config.theme, config.themeGlass)
   if (patch.language) localStorage.setItem("bob-baixa-lang", patch.language)
+  if (patch.outputDir !== undefined && trackKey(config.outputDir) !== trackKey(previous.outputDir)) {
+    void refreshCatalog(config.outputDir, () => getState().config.outputDir)
+  }
   if (!isTauri()) {
     if (patch.parallel !== undefined) pumpMock()
     return
@@ -837,6 +840,9 @@ async function persistConfig(config: Config, previous: Config) {
   } catch (error) {
     setState({ config: previous, error: errorText(error) })
     applyTheme(previous.theme, previous.themeGlass)
+    if (trackKey(previous.outputDir) !== trackKey(config.outputDir)) {
+      void refreshCatalog(previous.outputDir, () => getState().config.outputDir)
+    }
   }
 }
 
@@ -1033,7 +1039,7 @@ function applyEvent(event: BobEvent) {
   else if (event.type === "tools") setState({ tools: event.tools })
   else if (event.type === "history") {
     setState({ history: event.history })
-    void refreshCatalog()
+    void refreshCatalog(getState().config.outputDir, () => getState().config.outputDir)
   }
   else if (event.type === "watches") setState({ watches: event.watches })
   else if (event.type === "clipboard") onClipboard(event.url)
@@ -1137,10 +1143,10 @@ export function initApp() {
     }))
     applyTheme(loaded.config.theme, loaded.config.themeGlass)
     hydrated = true
-    void refreshCatalog()
     const patch = pendingPatch
     pendingPatch = null
     if (patch) setConfig(patch)
+    void refreshCatalog(getState().config.outputDir, () => getState().config.outputDir)
   })()
   void bindDesktopDrag()
 }
