@@ -192,6 +192,12 @@ pub struct EnqueueItem {
     pub container: Option<String>,
     #[serde(default)]
     pub audio_format: Option<String>,
+    /// Overrides the saved bitrate for this item. Used by modo econômico.
+    #[serde(default)]
+    pub audio_bitrate: Option<String>,
+    /// When set, the file is saved under `outputDir/<sanitized title>`.
+    #[serde(default)]
+    pub playlist_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -494,7 +500,11 @@ impl Job {
             format_id: item
                 .format_id
                 .filter(|value| !value.is_empty() && value != "auto"),
-            audio_bitrate: config.audio_bitrate.clone(),
+            audio_bitrate: item
+                .audio_bitrate
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| config.audio_bitrate.clone()),
             subtitles: config.subtitles,
             embed_subs: config.embed_subs,
             sub_langs: config.sub_langs.clone(),
@@ -506,7 +516,13 @@ impl Job {
             cookies_browser: config.cookies_browser.clone(),
             cookie_retried: false,
             update_retried: false,
-            output_dir: config.output_dir.clone(),
+            output_dir: item
+                .playlist_title
+                .as_deref()
+                .filter(|title| !title.trim().is_empty())
+                .map(|title| crate::playlist_output_dir(&config.output_dir, title))
+                .filter(|dir| !dir.trim().is_empty())
+                .unwrap_or_else(|| config.output_dir.clone()),
             filename_template: config.filename_template.clone(),
         }
     }
@@ -552,6 +568,42 @@ mod tests {
         let ids = claim_downloads(&mut jobs, 99);
         assert_eq!(ids, vec!["new".to_string()]);
         assert!(claim_downloads(&mut jobs, 4).is_empty());
+    }
+
+    #[test]
+    fn economy_bitrate_and_playlist_folder_override_the_saved_config() {
+        let config = Config {
+            output_dir: r"C:\Music\bob baixa".into(),
+            audio_bitrate: "192k".into(),
+            audio_only: false,
+            ..Config::default()
+        };
+        let job = Job::from_item(
+            EnqueueItem {
+                url: "https://youtu.be/abc".into(),
+                audio_only: Some(true),
+                audio_format: Some("opus".into()),
+                audio_bitrate: Some("24k".into()),
+                playlist_title: Some("Lisboa / noite?".into()),
+                ..EnqueueItem::default()
+            },
+            &config,
+            None,
+        );
+        assert!(job.audio_only);
+        assert_eq!(job.audio_format.as_deref(), Some("opus"));
+        assert_eq!(job.audio_bitrate, "24k");
+        assert_eq!(job.output_dir, r"C:\Music\bob baixa/Lisboa noite");
+        let plain = Job::from_item(
+            EnqueueItem {
+                url: "https://youtu.be/abc".into(),
+                ..EnqueueItem::default()
+            },
+            &config,
+            None,
+        );
+        assert_eq!(plain.audio_bitrate, "192k");
+        assert_eq!(plain.output_dir, r"C:\Music\bob baixa");
     }
 
     #[test]

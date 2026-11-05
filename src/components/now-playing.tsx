@@ -1,5 +1,7 @@
 import type { ReactNode } from "react"
 import { formatClock } from "../lib/format"
+import { trackKey } from "../lib/library"
+import { toggleLike, useMusic } from "../lib/music"
 import { displayArtist, displayTitle, playNext, playPrevious, seek, setVolume, toggleMute, togglePlayback, usePlayer } from "../lib/player"
 import { go, useT } from "../store"
 import { cn } from "../lib/cn"
@@ -38,8 +40,10 @@ function RoundButton({
 
 export function NowPlaying() {
   const player = usePlayer()
+  const music = useMusic()
   const t = useT()
   const track = player.queue[player.index]
+  const loved = track ? music.likes.includes(trackKey(track.path)) : false
   const title = displayTitle(player)
   const artist = displayArtist(player)
   const idle = !track
@@ -64,6 +68,17 @@ export function NowPlaying() {
             </span>
           </span>
         </button>
+        {track ? (
+          <button
+            type="button"
+            aria-pressed={loved}
+            aria-label={loved ? t("player_unlike") : t("player_like")}
+            className={loved ? "text-ink" : "text-muted"}
+            onClick={() => toggleLike(track.path)}
+          >
+            ♥
+          </button>
+        ) : null}
         <div className="flex items-center gap-1">
           <RoundButton label={t("player_prev")} disabled={idle} onClick={playPrevious}>
             <IconPrev className="h-4 w-4" />

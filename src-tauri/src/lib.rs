@@ -151,6 +151,20 @@ async fn cache_thumb(app: tauri::AppHandle, url: String) -> Result<String, Strin
 }
 
 #[tauri::command]
+fn set_now_playing(app: tauri::AppHandle, title: String, artist: String) {
+    let tooltip = if title.trim().is_empty() {
+        "bob baixa".to_string()
+    } else if artist.trim().is_empty() {
+        title
+    } else {
+        format!("{title} — {artist}")
+    };
+    if let Some(tray) = app.tray_by_id("bob") {
+        let _ = tray.set_tooltip(Some(tooltip));
+    }
+}
+
+#[tauri::command]
 fn read_text_file(path: String) -> Result<String, String> {
     let file = std::path::Path::new(&path);
     let name = file
@@ -221,7 +235,10 @@ pub fn run() {
             read_text_file,
             ack_whats_new,
             playback::inspect_media,
-            playback::load_lyrics
+            playback::load_lyrics,
+            playback::scan_library,
+            playback::delete_library_track,
+            set_now_playing
         ])
         .run(tauri::generate_context!())
         .expect("bob baixa");

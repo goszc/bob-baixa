@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { collectTracks, isInsideLibrary } from "./library.ts"
+import { collectTracks, dedupeTracks, isInsideLibrary, relatedTracks, type Track } from "./library.ts"
 import type { ConvertJob, HistoryEntry, Job } from "./types.ts"
 
 const folder = "C:\\Downloads\\bob baixa"
@@ -67,4 +67,43 @@ test("the library keeps playable files from the configured folder and drops the 
   const titles = collectTracks(jobs, history, convert, folder).map((track) => track.title)
   assert.deepEqual(titles, ["Lisboa", "Manha", "Voz"])
   assert.equal(collectTracks(jobs, history, convert, "").length, 0)
+})
+
+function track(partial: Partial<Track> & Pick<Track, "path" | "title">): Track {
+  return {
+    id: partial.path,
+    artist: "",
+    album: "",
+    folder: "",
+    pageUrl: "",
+    kind: "audio",
+    ...partial,
+  }
+}
+
+test("duplicates collapse when the youtube id or the tags match", () => {
+  const tracks = dedupeTracks([
+    track({ path: `${folder}\\A [dQw4w9WgXcQ].opus`, title: "A", artist: "Band", size: 10 }),
+    track({ path: `${folder}\\A [dQw4w9WgXcQ].mp3`, title: "A", artist: "Band", thumbnail: "t", size: 40 }),
+    track({ path: `${folder}\\outro.mp3`, title: "Manha", artist: "Ana", duration: 180, size: 20 }),
+    track({ path: `${folder}\\copia.mp3`, title: "Manha", artist: "Ana", duration: 181, size: 50 }),
+    track({ path: `${folder}\\video.mp4`, title: "Manha", artist: "Ana", duration: 180, kind: "video" }),
+  ])
+  assert.deepEqual(
+    tracks.map((item) => item.path),
+    [`${folder}\\A [dQw4w9WgXcQ].mp3`, `${folder}\\copia.mp3`, `${folder}\\video.mp4`],
+  )
+})
+
+test("local radio stays on the same artist, album or folder", () => {
+  const seed = track({ path: `${folder}\\a.mp3`, title: "A", artist: "Ana", album: "Disco", folder: "Disco" })
+  const list = relatedTracks(seed, [
+    seed,
+    track({ path: `${folder}\\b.mp3`, title: "B", artist: "Ana", album: "Outro", folder: "Outro" }),
+    track({ path: `${folder}\\c.mp3`, title: "C", artist: "Outra", album: "Disco", folder: "Disco" }),
+    track({ path: `${folder}\\d.mp3`, title: "D", artist: "Longe", album: "Longe", folder: "Longe" }),
+  ])
+  assert.equal(list[0].path, seed.path)
+  assert.equal(list.length, 3)
+  assert.ok(list.every((item) => item.path !== `${folder}\\d.mp3`))
 })

@@ -37,6 +37,7 @@ export function Search() {
           value={app.searchFormat}
           onChange={(value) => setField("searchFormat", value)}
           options={[
+            { value: "economy", label: t("search_economy") },
             { value: "mp3", label: "mp3" },
             { value: "mp4", label: "mp4" },
           ]}

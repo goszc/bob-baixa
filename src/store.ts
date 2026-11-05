@@ -1,6 +1,9 @@
 import { useSyncExternalStore } from "react"
 import { applyWindowTheme, chooseFile, chooseFolder, errorText, invoke, isTauri, listenBob, readTextFile, revealPath } from "./lib/api"
+import { markRemoved, refreshCatalog, unmarkRemoved } from "./lib/catalog"
 import { extractUrls, isMediaPath, isTextPath, isTime, nextIsoFromClock } from "./lib/format"
+import { trackKey } from "./lib/library"
+import { forgetTracks } from "./lib/player"
 import { presetFromConfig, presetPatch } from "./lib/presets"
 import type { DownloadPreset } from "./lib/types"
 import { translate, type Key } from "./lib/i18n"
@@ -45,7 +48,7 @@ export interface AppState {
   tools: ToolStatus
   searchQuery: string
   searchHits: SearchHit[]
-  searchFormat: "mp3" | "mp4"
+  searchFormat: "mp3" | "mp4" | "economy"
   convertInput: string
   convertPreset: ConvertPreset
   convertBitrate: string
@@ -71,6 +74,8 @@ const previewMode =
   typeof location !== "undefined" && new URLSearchParams(location.search).get("preview") === "1"
 
 let analyzedKey = ""
+let suppressKey = ""
+let analyzeToken = 0
 
 const emptyTools: ToolStatus = { ytdlp: "missing", ffmpeg: "missing" }
 
@@ -241,6 +246,7 @@ function itemsFromAnalyzed(): EnqueueItem[] {
             title: entry.title,
             thumbnail: entry.thumbnail,
             duration: entry.duration,
+            playlistTitle: media.title,
           }),
         )
       }
@@ -282,14 +288,6 @@ function mockJob(item: EnqueueItem, index: number): Job {
     quality: config.quality,
     container: item.container ?? config.container,
   }
-}
-
-function rememberChoices(items: MediaItem[]) {
-  const entryChoice = { ...getState().entryChoice }
-  for (const item of items) {
-    if (item.kind === "playlist") entryChoice[item.id] = item.entries.map((entry) => entry.id)
-  }
-  return entryChoice
 }
 
 async function mockAnalyze(urls: string[]): Promise<MediaItem[]> {
@@ -435,19 +433,78 @@ async function considerEnqueue(items: EnqueueItem[]) {
   await enqueueItems(items)
 }
 
+function keepLatestPlaylist(items: MediaItem[]) {
+  let last = -1
+  items.forEach((item, index) => {
+    if (item.kind === "playlist") last = index
+  })
+  if (last < 0) return items
+  return items.filter((item, index) => item.kind !== "playlist" || index === last)
+}
+
+function choicesFor(items: MediaItem[]) {
+  const entryChoice: Record<string, string[]> = {}
+  for (const item of items) {
+    if (item.kind === "playlist") entryChoice[item.id] = item.entries.map((entry) => entry.id)
+  }
+  return entryChoice
+}
+
+function withoutUrl(draft: string, url: string) {
+  return draft
+    .split(/\r?\n/)
+    .map((line) => line.replace(url, "").trim())
+    .filter((line) => line.length > 0)
+    .join("\n")
+}
+
 export async function analyze() {
   const urls = extractUrls(getState().draft)
-  if (!urls.length) return
   const key = urls.join("\n")
+  if (!urls.length) {
+    analyzeToken += 1
+    analyzedKey = ""
+    suppressKey = ""
+    setState({ analyzed: [], busy: null, entryChoice: {} })
+    return
+  }
+  if (key === suppressKey) return
   if (key === analyzedKey && getState().analyzed.length > 0) return
-  setState({ busy: "analyze", error: null })
+  const token = ++analyzeToken
+  setState({ busy: "analyze", error: null, analyzed: [] })
   try {
-    const analyzed = isTauri() ? await invoke<MediaItem[]>("analyze", { urls }) : await mockAnalyze(urls)
+    const raw = isTauri() ? await invoke<MediaItem[]>("analyze", { urls }) : await mockAnalyze(urls)
+    if (token !== analyzeToken) return
+    const analyzed = keepLatestPlaylist(raw)
     analyzedKey = key
-    setState({ analyzed, busy: null, entryChoice: rememberChoices(analyzed) })
+    suppressKey = ""
+    setState({ analyzed, busy: null, entryChoice: choicesFor(analyzed) })
   } catch (error) {
+    if (token !== analyzeToken) return
     setState({ busy: null, error: errorText(error) })
   }
+}
+
+export function dismissAnalyzed(id: string) {
+  const current = getState()
+  const media = current.analyzed.find((item) => item.id === id)
+  const analyzed = current.analyzed.filter((item) => item.id !== id)
+  const draft = media?.url ? withoutUrl(current.draft, media.url) : current.draft
+  const key = extractUrls(draft).join("\n")
+  analyzedKey = key
+  suppressKey = analyzed.length ? "" : key
+  analyzeToken += 1
+  const entryChoice = { ...current.entryChoice }
+  delete entryChoice[id]
+  setState({ ...current, analyzed, draft, entryChoice, busy: null })
+}
+
+export function dismissAllAnalyzed() {
+  const key = extractUrls(getState().draft).join("\n")
+  suppressKey = key
+  analyzedKey = key
+  analyzeToken += 1
+  setState({ analyzed: [], entryChoice: {}, busy: null })
 }
 
 export async function downloadNow() {
@@ -485,7 +542,15 @@ export async function addAnalyzed(id: string) {
   const picked = new Set(getState().entryChoice[id] ?? [])
   const items = media.entries
     .filter((entry) => picked.has(entry.id))
-    .map((entry) => withClip({ url: entry.url, title: entry.title, thumbnail: entry.thumbnail, duration: entry.duration }))
+    .map((entry) =>
+      withClip({
+        url: entry.url,
+        title: entry.title,
+        thumbnail: entry.thumbnail,
+        duration: entry.duration,
+        playlistTitle: media.title,
+      }),
+    )
   await considerEnqueue(items)
 }
 
@@ -572,17 +637,52 @@ export async function runSearch() {
 
 export async function enqueueHit(hit: SearchHit) {
   const format = getState().searchFormat
+  const economy = format === "economy"
   await enqueueItems([
     {
       url: hit.url,
       title: hit.title,
       thumbnail: hit.thumbnail,
       duration: hit.duration,
-      audioOnly: format === "mp3",
-      audioFormat: format === "mp3" ? "mp3" : undefined,
+      audioOnly: format === "mp3" || economy,
+      audioFormat: economy ? "opus" : format === "mp3" ? "mp3" : undefined,
+      audioBitrate: economy ? "24k" : undefined,
       container: format === "mp4" ? "mp4" : undefined,
     },
   ])
+}
+
+export function requestDeleteTrack(path: string, title: string) {
+  setState({
+    confirm: {
+      title: translate(lang(), "delete_track_title"),
+      body: translate(lang(), "delete_track_body", { title }),
+      confirm: translate(lang(), "delete_track"),
+      cancel: translate(lang(), "cancel"),
+      run: () => {
+        void performDelete(path)
+      },
+    },
+  })
+}
+
+async function performDelete(path: string) {
+  const previous = getState()
+  markRemoved(path)
+  forgetTracks([path])
+  setState((current) => ({
+    ...current,
+    history: current.history.filter((entry) => !entry.path || trackKey(entry.path) !== trackKey(path)),
+    jobs: current.jobs.map((job) => (job.outputPath && trackKey(job.outputPath) === trackKey(path) ? { ...job, outputPath: undefined } : job)),
+  }))
+  if (!isTauri()) return
+  try {
+    await invoke("delete_library_track", { path })
+    await refreshCatalog()
+  } catch (error) {
+    unmarkRemoved(path)
+    setState({ history: previous.history, jobs: previous.jobs, error: errorText(error) })
+  }
 }
 
 export async function startConvert() {
@@ -931,7 +1031,10 @@ type BobEvent =
 function applyEvent(event: BobEvent) {
   if (event.type === "jobs") setState({ jobs: event.jobs })
   else if (event.type === "tools") setState({ tools: event.tools })
-  else if (event.type === "history") setState({ history: event.history })
+  else if (event.type === "history") {
+    setState({ history: event.history })
+    void refreshCatalog()
+  }
   else if (event.type === "watches") setState({ watches: event.watches })
   else if (event.type === "clipboard") onClipboard(event.url)
   else if (event.type === "toast") {
@@ -1034,6 +1137,7 @@ export function initApp() {
     }))
     applyTheme(loaded.config.theme, loaded.config.themeGlass)
     hydrated = true
+    void refreshCatalog()
     const patch = pendingPatch
     pendingPatch = null
     if (patch) setConfig(patch)

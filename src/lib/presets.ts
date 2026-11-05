@@ -2,6 +2,23 @@ import type { Config, DownloadPreset } from "./types"
 
 export const builtinPresets: DownloadPreset[] = [
   {
+    id: "builtin-economy",
+    name: "modo econômico",
+    quality: "1080",
+    container: "mp4",
+    audioOnly: true,
+    audioFormat: "opus",
+    audioBitrate: "24k",
+    subtitles: false,
+    embedSubs: false,
+    subLangs: "pt.*,en.*",
+    embedThumbnail: false,
+    embedMetadata: true,
+    embedChapters: false,
+    sponsorblock: false,
+    sponsorCategories: [],
+  },
+  {
     id: "builtin-mp3",
     name: "música mp3",
     quality: "1080",

@@ -2,15 +2,17 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bob_core::{
-    is_playable_media, lrclib_get_url, lrclib_search_url, lyrics_cache_key, lyrics_from_cache,
-    lyrics_query, media_kind, parse_lrclib_payload, pick_lrclib, read_embedded, read_lyrics_cache,
-    read_sibling_lrc, resolve_lyrics, write_lyrics_cache, LrclibQuery, LyricInputs,
-    LyricsCacheEntry, ResolvedLyrics,
+    hit_from_lrclib, is_playable_media, karalyr_get_url, karalyr_search_url, lrcmux_get_url,
+    lrclib_get_url, lrclib_search_url, lyrics_cache_key, lyrics_from_cache, lyrics_ovh_url,
+    lyrics_query, media_kind, parse_lrclib_payload, parse_lrcmux_payload, parse_lyrics_ovh,
+    pick_lrclib, read_embedded, read_lyrics_cache, read_sibling_lrc, remote_hit_is_useful,
+    resolve_lyrics, write_lyrics_cache, LrclibQuery, LyricInputs, LyricsCacheEntry, RemoteHit,
+    ResolvedLyrics,
 };
 use serde::Serialize;
 use tauri::Manager;
 
-use crate::runtime::AppState;
+use crate::runtime::{emit, save, AppState};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,7 +66,7 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
     })
 }
 
-/// Embedded lyrics, then a sibling `.lrc`, then one cached LRCLIB lookup.
+/// Embedded tags, sibling `.lrc`, then lrcmux, Karalyr, LRCLIB and lyrics.ovh.
 #[tauri::command]
 pub async fn load_lyrics(
     app: tauri::AppHandle,
@@ -103,8 +105,29 @@ pub async fn load_lyrics(
     if let Some(entry) = read_lyrics_cache(&cache_dir, &key, now) {
         return Ok(lyrics_from_cache(&entry));
     }
-    let Some(entry) = fetch_lrclib(&query, now).await else {
-        return Ok(ResolvedLyrics::empty());
+    let client = match lyrics_client() {
+        Some(client) => client,
+        None => return Ok(ResolvedLyrics::empty()),
+    };
+    let chain = fetch_remote_chain(&client, &query).await;
+    let entry = match chain {
+        Chain::Hit(hit) => LyricsCacheEntry {
+            fetched_at: now,
+            found: true,
+            instrumental: hit.instrumental && hit.synced.is_none() && hit.plain.is_none(),
+            synced: hit.synced,
+            plain: hit.plain,
+            source: hit.source,
+        },
+        Chain::Miss => LyricsCacheEntry {
+            fetched_at: now,
+            found: false,
+            instrumental: false,
+            synced: None,
+            plain: None,
+            source: String::new(),
+        },
+        Chain::Offline => return Ok(ResolvedLyrics::empty()),
     };
     let _ = write_lyrics_cache(&cache_dir, &key, &entry);
     Ok(lyrics_from_cache(&entry))
@@ -119,46 +142,117 @@ async fn lyrics_cache_dir(app: &tauri::AppHandle) -> PathBuf {
     }
 }
 
-async fn fetch_lrclib(query: &LrclibQuery, now: i64) -> Option<LyricsCacheEntry> {
-    let client = reqwest::Client::builder()
+enum Chain {
+    Hit(RemoteHit),
+    Miss,
+    Offline,
+}
+
+fn lyrics_client() -> Option<reqwest::Client> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Ok(value) = reqwest::header::HeaderValue::from_str(concat!(
+        "bob-baixa/",
+        env!("CARGO_PKG_VERSION")
+    )) {
+        headers.insert("X-Karalyr-Client", value);
+    }
+    reqwest::Client::builder()
         .user_agent(concat!(
             "bob-baixa/",
             env!("CARGO_PKG_VERSION"),
             " (https://github.com/goszc/bob-baixa)"
         ))
+        .default_headers(headers)
         .timeout(Duration::from_secs(8))
         .build()
-        .ok()?;
+        .ok()
+}
+
+async fn fetch_remote_chain(client: &reqwest::Client, query: &LrclibQuery) -> Chain {
+    let mut saw_miss = false;
+    let mut saw_offline = false;
+    let steps = [
+        fetch_lrcmux(client, query).await,
+        fetch_shaped(client, query, "karalyr", &karalyr_get_url(query), &karalyr_search_url(query)).await,
+        fetch_shaped(client, query, "lrclib", &lrclib_get_url(query), &lrclib_search_url(query)).await,
+        fetch_ovh(client, query).await,
+    ];
+    for step in steps {
+        match step {
+            Chain::Hit(hit) if remote_hit_is_useful(&hit) => return Chain::Hit(hit),
+            Chain::Hit(_) | Chain::Miss => saw_miss = true,
+            Chain::Offline => saw_offline = true,
+        }
+    }
+    if saw_miss {
+        Chain::Miss
+    } else if saw_offline {
+        Chain::Offline
+    } else {
+        Chain::Miss
+    }
+}
+
+async fn fetch_lrcmux(client: &reqwest::Client, query: &LrclibQuery) -> Chain {
+    if query.artist_name.trim().is_empty() || query.track_name.trim().is_empty() {
+        return Chain::Miss;
+    }
+    match fetch_body(client, &lrcmux_get_url(query)).await {
+        Fetch::Offline => Chain::Offline,
+        Fetch::Body(body) => parse_lrcmux_payload(&body).map(Chain::Hit).unwrap_or(Chain::Miss),
+    }
+}
+
+async fn fetch_shaped(
+    client: &reqwest::Client,
+    query: &LrclibQuery,
+    source: &str,
+    get_url: &str,
+    search_url: &str,
+) -> Chain {
     let mut tracks = Vec::new();
+    let mut offline = false;
     if !query.artist_name.trim().is_empty() {
-        match fetch_body(&client, &lrclib_get_url(query)).await {
-            Fetch::Offline => return None,
+        match fetch_body(client, get_url).await {
+            Fetch::Offline => offline = true,
             Fetch::Body(body) => tracks = parse_lrclib_payload(&body),
         }
     }
     if tracks.is_empty() {
-        match fetch_body(&client, &lrclib_search_url(query)).await {
-            Fetch::Offline => return None,
+        match fetch_body(client, search_url).await {
+            Fetch::Offline => offline = true,
             Fetch::Body(body) => tracks = parse_lrclib_payload(&body),
         }
     }
-    let picked = pick_lrclib(&tracks, query.duration);
-    Some(match picked {
-        Some(track) => LyricsCacheEntry {
-            fetched_at: now,
-            found: true,
-            instrumental: track.instrumental && track.synced.is_none() && track.plain.is_none(),
-            synced: track.synced.clone(),
-            plain: track.plain.clone(),
+    if let Some(track) = pick_lrclib(&tracks, query.duration) {
+        let hit = hit_from_lrclib(track, source);
+        if remote_hit_is_useful(&hit) {
+            return Chain::Hit(hit);
+        }
+    }
+    if tracks.is_empty() && offline {
+        Chain::Offline
+    } else {
+        Chain::Miss
+    }
+}
+
+async fn fetch_ovh(client: &reqwest::Client, query: &LrclibQuery) -> Chain {
+    if query.artist_name.trim().is_empty() || query.track_name.trim().is_empty() {
+        return Chain::Miss;
+    }
+    match fetch_body(client, &lyrics_ovh_url(&query.artist_name, &query.track_name)).await {
+        Fetch::Offline => Chain::Offline,
+        Fetch::Body(body) => match parse_lyrics_ovh(&body) {
+            Some(plain) => Chain::Hit(RemoteHit {
+                source: "ovh".into(),
+                synced: None,
+                plain: Some(plain),
+                instrumental: false,
+            }),
+            None => Chain::Miss,
         },
-        None => LyricsCacheEntry {
-            fetched_at: now,
-            found: false,
-            instrumental: false,
-            synced: None,
-            plain: None,
-        },
-    })
+    }
 }
 
 enum Fetch {
@@ -166,16 +260,98 @@ enum Fetch {
     Offline,
 }
 
+#[tauri::command]
+pub async fn scan_library(app: tauri::AppHandle) -> Result<Vec<bob_core::ScannedMedia>, String> {
+    let root = {
+        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        inner.config.output_dir.clone()
+    };
+    if root.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let path = PathBuf::from(root);
+    tokio::task::spawn_blocking(move || bob_core::scan_media_dir(&path))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_library_track(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let (root, language) = {
+        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        (inner.config.output_dir.clone(), inner.config.language.clone())
+    };
+    let outside = bob_core::text(
+        &language,
+        "essa faixa está fora da pasta da biblioteca.",
+        "that track is outside the library folder.",
+    );
+    if !bob_core::string_inside(&root, &path) {
+        return Err(outside.clone());
+    }
+    let file = PathBuf::from(&path);
+    let root_buf = PathBuf::from(&root);
+    if file.exists() && !bob_core::path_within(&root_buf, &file) {
+        return Err(outside);
+    }
+    let path_for_disk = path.clone();
+    tokio::task::spawn_blocking(move || remove_track_files(&path_for_disk))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
+    inner.history.retain(|entry| {
+        entry
+            .path
+            .as_deref()
+            .map(|item| !bob_core::same_path(item, &path))
+            .unwrap_or(true)
+    });
+    for job in &mut inner.jobs {
+        if job
+            .output_path
+            .as_deref()
+            .map(|item| bob_core::same_path(item, &path))
+            .unwrap_or(false)
+        {
+            job.output_path = None;
+        }
+    }
+    save(&inner);
+    let jobs = inner.jobs.clone();
+    let history = inner.history.clone();
+    drop(inner);
+    emit(&app, &bob_core::BobEvent::Jobs { jobs });
+    emit(&app, &bob_core::BobEvent::History { history });
+    Ok(())
+}
+
+fn remove_track_files(path: &str) -> std::io::Result<()> {
+    let file = PathBuf::from(path);
+    if !file.is_file() {
+        return Ok(());
+    }
+    let canon = file.canonicalize()?;
+    std::fs::remove_file(&canon)?;
+    for sidecar in bob_core::lyric_sidecars(&canon) {
+        if sidecar.is_file() {
+            let _ = std::fs::remove_file(sidecar);
+        }
+    }
+    Ok(())
+}
+
 async fn fetch_body(client: &reqwest::Client, url: &str) -> Fetch {
     let response = match client.get(url).send().await {
         Ok(response) => response,
         Err(_) => return Fetch::Offline,
     };
-    if response.status().as_u16() == 404 {
+    let status = response.status().as_u16();
+    if status == 404 || status == 204 {
         return Fetch::Body(String::new());
     }
     if !response.status().is_success() {
-        return Fetch::Body(String::new());
+        return Fetch::Offline;
     }
     match response.text().await {
         Ok(body) if body.len() <= 1_000_000 => Fetch::Body(body),

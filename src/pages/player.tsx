@@ -3,10 +3,12 @@ import { Segmented } from "../components/segmented"
 import { IconNext, IconPause, IconPlay, IconPrev, IconRepeat, IconShuffle, IconVolume } from "../components/player-icons"
 import { Scrubber } from "../components/scrubber"
 import { Thumb } from "../components/thumb"
-import { Input } from "../components/ui/input"
+import { LibraryPanel } from "../components/library-panel"
+import { isTauri } from "../lib/api"
+import { catalogTracks, refreshCatalog, useCatalog } from "../lib/catalog"
 import { formatClock } from "../lib/format"
 import type { Key } from "../lib/i18n"
-import { collectTracks, type Track } from "../lib/library"
+import type { Track } from "../lib/library"
 import { cn } from "../lib/cn"
 import {
   activeLine,
@@ -18,7 +20,8 @@ import {
   playNext,
   playPrevious,
   playOrderSlot,
-  playTracks,
+  restoreSession,
+  syncQueue,
   seek,
   setPanel,
   setVideoSlot,
@@ -33,13 +36,10 @@ import { openOutput, useApp, useT } from "../store"
 const SOURCE_KEY: Record<string, Key> = {
   embedded: "lyrics_source_embedded",
   file: "lyrics_source_file",
+  lrcmux: "lyrics_source_lrcmux",
+  karalyr: "lyrics_source_karalyr",
   lrclib: "lyrics_source_lrclib",
-}
-
-function matches(track: Track, query: string) {
-  const needle = query.trim().toLocaleLowerCase()
-  if (!needle) return true
-  return `${track.title} ${track.artist}`.toLocaleLowerCase().includes(needle)
+  ovh: "lyrics_source_ovh",
 }
 
 function TransportButton({
@@ -166,11 +166,18 @@ export function Player() {
   const player = usePlayer()
   const t = useT()
   const [query, setQuery] = useState("")
+  const disk = useCatalog()
   const library = useMemo(
-    () => collectTracks(app.jobs, app.history, app.convertJob, app.config.outputDir),
-    [app.jobs, app.history, app.convertJob, app.config.outputDir],
+    () => catalogTracks(app.jobs, app.history, app.convertJob, app.config.outputDir),
+    [app.jobs, app.history, app.convertJob, app.config.outputDir, disk],
   )
-  const visible = library.filter((track) => matches(track, query))
+  useEffect(() => {
+    void refreshCatalog()
+  }, [app.config.outputDir, app.history.length, app.jobs.length])
+  useEffect(() => {
+    restoreSession(library, disk !== null || !isTauri())
+    if (disk) syncQueue(library)
+  }, [library, disk])
   const queue = orderedTracks(player)
   const track = currentTrack(player)
   const title = displayTitle(player)
@@ -270,31 +277,33 @@ export function Player() {
         ) : (
           <div className="mt-4 flex min-h-0 flex-1 flex-col">
             {player.panel === "library" ? (
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("player_filter")} className="mb-3 h-9" />
-            ) : null}
-            <div className="min-h-0 flex-1 space-y-1 overflow-auto pb-4">
-              {player.panel === "library" && visible.length === 0 ? (
-                <div className="px-2 py-10">
-                  <p className="text-[15px]">{library.length === 0 ? t("player_empty") : t("no_results")}</p>
-                  {library.length === 0 ? <p className="mt-2 text-[13px] text-muted">{t("player_empty_hint")}</p> : null}
-                </div>
-              ) : null}
-              {player.panel === "queue" && queue.length === 0 ? (
-                <p className="px-2 py-10 text-[14px] text-muted">{t("player_queue_empty")}</p>
-              ) : null}
-              {(player.panel === "library" ? visible : queue).map((item, index) => (
-                <TrackButton
-                  key={`${item.id}-${item.path}`}
-                  track={item}
-                  active={item.id === track?.id && item.path === track?.path}
-                  playing={player.playing && !player.error}
-                  onClick={() => {
-                    if (player.panel === "library") playTracks(visible, index)
-                    else playOrderSlot(index)
-                  }}
-                />
-              ))}
-            </div>
+              <LibraryPanel
+                tracks={library}
+                query={query}
+                onQuery={setQuery}
+                renderTrack={(item, onPlay) => (
+                  <TrackButton
+                    track={item}
+                    active={item.path === track?.path}
+                    playing={player.playing && !player.error && item.path === track?.path}
+                    onClick={onPlay}
+                  />
+                )}
+              />
+            ) : (
+              <div className="mt-4 min-h-0 flex-1 space-y-1 overflow-auto pb-4">
+                {queue.length === 0 ? <p className="px-2 py-10 text-[14px] text-muted">{t("player_queue_empty")}</p> : null}
+                {queue.map((item, index) => (
+                  <TrackButton
+                    key={`${item.path}-${index}`}
+                    track={item}
+                    active={item.path === track?.path}
+                    playing={player.playing && !player.error && item.path === track?.path}
+                    onClick={() => playOrderSlot(index)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </aside>

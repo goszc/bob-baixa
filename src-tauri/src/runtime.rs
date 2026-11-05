@@ -1924,7 +1924,7 @@ fn setup_tray(app: &AppHandle) {
         return;
     };
     let icon = tauri::include_image!("icons/32x32.png");
-    let _ = TrayIconBuilder::new()
+    let _ = TrayIconBuilder::with_id("bob")
         .icon(icon)
         .menu(&menu)
         .tooltip("bob baixa")
@@ -2177,7 +2177,7 @@ fn public_watches(watches: &[Watch]) -> Vec<Watch> {
         .collect()
 }
 
-fn save(inner: &Inner) {
+pub(crate) fn save(inner: &Inner) {
     if inner.data_dir.as_os_str().is_empty() {
         return;
     }
@@ -2251,9 +2251,9 @@ mod tests {
     #[test]
     fn bundled_notes_match_this_version() {
         let notes = release_notes();
-        assert!(notes.contains("## 0.3.0"), "{notes}");
-        assert!(notes.contains("429"));
-        assert!(notes.contains("lrclib"));
-        assert!(!notes.contains("## 0.2.0"));
+        assert!(notes.contains("## 0.4.0"), "{notes}");
+        assert!(notes.contains("lrcmux"));
+        assert!(notes.contains("modo econômico") || notes.contains("econom"));
+        assert!(!notes.contains("## 0.3.0"));
     }
 }

@@ -1,5 +1,18 @@
 # changelog
 
+## 0.4.0
+
+- modo econômico: um toque baixa só o áudio em opus a cerca de 24 kbps, perto de 0,5 MB numa faixa de três minutos. faixas longas podem passar disso e soar como rádio. o mp4 continua nas outras predefinições e na busca
+- analisar outra playlist não deixa a anterior empilhada. dá para fechar um card ou fechar todas, e só a playlist mais recente fica aberta
+- apagar uma faixa remove o arquivo do disco, a entrada do histórico e a faixa da biblioteca, da fila e do que está tocando
+- playlist baixada vai para uma subpasta com o nome dela
+- biblioteca por faixas, artistas, álbuns e pastas, com busca. playlists locais, curtidas, recentes, rádio local, m3u e um manifesto simples
+- fila de reprodução separada da biblioteca: tocar a seguir, adicionar e limpar. aleatório e repetir continuam valendo nessa fila
+- a reprodução lembra o ponto da faixa e a última sessão
+- faixas iguais (mesmo arquivo, mesmo id do youtube ou mesma música) não aparecem duas vezes
+- letras: arquivo, .lrc ao lado, lrcmux, karalyr, lrclib e lyrics.ovh. o nome usado na busca tira o ruído de título do youtube
+- crossfade de 2 ou 3 segundos, nivelamento leve, atalhos e teclas de mídia, timer de sono e a retrospectiva local (semana, mês, ano e 12 meses): minutos, sequência e tops. nada disso sai do computador
+
 ## 0.3.0
 
 - player para o que já foi baixado. toca áudio e vídeo, com a barra de agora tocando sempre visível. volume e mudo ficam nessa barra, e o último volume continua salvo

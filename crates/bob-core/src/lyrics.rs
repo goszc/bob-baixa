@@ -12,7 +12,7 @@ pub struct LyricLine {
     pub text: String,
 }
 
-/// Lyrics ready for the player. `source` is `embedded`, `file`, `lrclib`, or `none`.
+/// Lyrics ready for the player. `source` is `embedded`, `file`, `lrcmux`, `karalyr`, `lrclib`, `ovh`, or `none`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedLyrics {
@@ -53,6 +53,8 @@ pub struct LyricInputs<'a> {
     pub remote_synced: Option<&'a str>,
     pub remote_plain: Option<&'a str>,
     pub instrumental: bool,
+    /// Remote provider name. Empty means `lrclib`, which keeps older callers stable.
+    pub remote_source: &'a str,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -91,12 +93,16 @@ pub struct LyricsCacheEntry {
     pub instrumental: bool,
     pub synced: Option<String>,
     pub plain: Option<String>,
+    /// Which remote provider produced this entry. Empty cache files stay compatible.
+    #[serde(default)]
+    pub source: String,
 }
 
 const HIT_TTL: i64 = 30 * 24 * 60 * 60;
 const MISS_TTL: i64 = 24 * 60 * 60;
 
-/// Embedded lyrics, then a sibling `.lrc`, then LRCLIB. Empty text does not count as found.
+/// Embedded lyrics, then a sibling `.lrc`, then one remote payload.
+/// The player tries lrcmux, Karalyr, LRCLIB and lyrics.ovh before filling that payload.
 pub fn resolve_lyrics(input: LyricInputs<'_>) -> ResolvedLyrics {
     if let Some(text) = blank_none(input.embedded) {
         let resolved = from_text(text, "embedded");
@@ -112,9 +118,10 @@ pub fn resolve_lyrics(input: LyricInputs<'_>) -> ResolvedLyrics {
     }
     let remote_synced = blank_none(input.remote_synced);
     let remote_plain = blank_none(input.remote_plain);
+    let source = remote_label(input.remote_source);
     if input.instrumental && remote_synced.is_none() && remote_plain.is_none() {
         return ResolvedLyrics {
-            source: "lrclib".into(),
+            source: source.into(),
             synced: false,
             instrumental: true,
             lines: Vec::new(),
@@ -122,18 +129,27 @@ pub fn resolve_lyrics(input: LyricInputs<'_>) -> ResolvedLyrics {
         };
     }
     if let Some(text) = remote_synced {
-        let resolved = from_text(text, "lrclib");
+        let resolved = from_text(text, source);
         if resolved.has_lines() {
             return resolved;
         }
     }
     if let Some(text) = remote_plain {
-        let resolved = from_text(text, "lrclib");
+        let resolved = from_text(text, source);
         if resolved.has_lines() {
             return resolved;
         }
     }
     ResolvedLyrics::empty()
+}
+
+fn remote_label(source: &str) -> &str {
+    let source = source.trim();
+    if source.is_empty() {
+        "lrclib"
+    } else {
+        source
+    }
 }
 
 pub fn lyrics_from_cache(entry: &LyricsCacheEntry) -> ResolvedLyrics {
@@ -146,6 +162,7 @@ pub fn lyrics_from_cache(entry: &LyricsCacheEntry) -> ResolvedLyrics {
         remote_synced: entry.synced.as_deref(),
         remote_plain: entry.plain.as_deref(),
         instrumental: entry.instrumental,
+        remote_source: entry.source.as_str(),
     })
 }
 
@@ -317,32 +334,39 @@ pub fn split_artist_title(raw: &str) -> (String, String) {
     (String::new(), raw.to_string())
 }
 
-/// Drop trailing YouTube decorations such as `(Official Video)`.
+/// Drop YouTube decorations: official video, lyrics, topic, feat. credits, `[Video]`.
 pub fn clean_track_query(title: &str) -> String {
-    let mut title = title.trim().to_string();
-    loop {
-        let trimmed = title.trim();
-        let Some(open) = trimmed.rfind(['(', '[']) else {
-            break;
-        };
-        let closer = if trimmed[open..].starts_with('(') {
-            ')'
-        } else {
-            ']'
-        };
-        if !trimmed.ends_with(closer) {
-            break;
-        }
-        let inner = trimmed[open + 1..trimmed.len() - 1].to_lowercase();
-        if !is_title_noise(&inner) {
-            break;
-        }
-        title = trimmed[..open].trim().to_string();
-        if title.is_empty() {
-            break;
+    let mut title = collapse_spaces(title.trim());
+    if title.is_empty() {
+        return title;
+    }
+    title = strip_feat_clauses(&title);
+    title = strip_pipe_noise(&title);
+    title = strip_wrapped_noise(&title);
+    title = strip_bare_suffix(&title);
+    title = strip_wrapped_noise(&title);
+    collapse_spaces(title.trim())
+}
+
+/// Channel names like `Banda - Topic` or `Banda VEVO` become `Banda`.
+pub fn clean_artist_query(artist: &str) -> String {
+    let mut artist = artist.trim().to_string();
+    let lower = artist.to_lowercase();
+    if let Some(rest) = lower.strip_suffix(" - topic") {
+        if !rest.trim().is_empty() {
+            let end = artist.len() - " - topic".len();
+            artist = artist[..end].trim().to_string();
         }
     }
-    title
+    let lower = artist.to_lowercase();
+    if lower.ends_with("vevo") && artist.len() > 4 {
+        let end = artist.len() - 4;
+        let rest = artist[..end].trim().trim_end_matches(['-', ' ']);
+        if !rest.is_empty() {
+            artist = rest.to_string();
+        }
+    }
+    clean_track_query(&artist)
 }
 
 pub fn lyrics_query(
@@ -378,6 +402,7 @@ pub fn lyrics_query(
             }
         })
         .unwrap_or(fallback_artist);
+    let artist = clean_artist_query(&artist);
     let duration = embedded
         .duration
         .or(hint_duration)
@@ -406,6 +431,185 @@ pub fn lrclib_get_url(query: &LrclibQuery) -> String {
         url.push_str(&format!("&duration={duration}"));
     }
     url
+}
+
+pub fn karalyr_get_url(query: &LrclibQuery) -> String {
+    hosted_get_url("https://karalyr.com", query)
+}
+
+pub fn karalyr_search_url(query: &LrclibQuery) -> String {
+    hosted_search_url("https://karalyr.com", query)
+}
+
+pub fn lrcmux_get_url(query: &LrclibQuery) -> String {
+    format!(
+        "https://api.lrcmux.dev/get?artist={}&title={}&format=json",
+        percent_encode(query.artist_name.trim()),
+        percent_encode(query.track_name.trim())
+    )
+}
+
+pub fn lyrics_ovh_url(artist: &str, title: &str) -> String {
+    format!(
+        "https://api.lyrics.ovh/v1/{}/{}",
+        percent_encode(artist.trim()),
+        percent_encode(title.trim())
+    )
+}
+
+/// A remote hit after a provider responded. `source` is `lrcmux`, `karalyr`, `lrclib`, or `ovh`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteHit {
+    pub source: String,
+    pub synced: Option<String>,
+    pub plain: Option<String>,
+    pub instrumental: bool,
+}
+
+pub fn hit_from_lrclib(track: &LrclibTrack, source: &str) -> RemoteHit {
+    RemoteHit {
+        source: source.to_string(),
+        synced: track
+            .synced
+            .as_ref()
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty()),
+        plain: track
+            .plain
+            .as_ref()
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty()),
+        instrumental: track.instrumental,
+    }
+}
+
+pub fn remote_hit_is_useful(hit: &RemoteHit) -> bool {
+    hit.instrumental
+        || hit
+            .synced
+            .as_ref()
+            .map(|text| !text.trim().is_empty())
+            .unwrap_or(false)
+        || hit
+            .plain
+            .as_ref()
+            .map(|text| !text.trim().is_empty())
+            .unwrap_or(false)
+}
+
+/// lrcmux `format=json`. Line `start` is milliseconds. Word timings are collapsed to one line.
+pub fn parse_lrcmux_payload(body: &str) -> Option<RemoteHit> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let meta = value.get("meta")?.as_object()?;
+    if meta
+        .get("instrumental")
+        .and_then(|item| item.as_bool())
+        .unwrap_or(false)
+    {
+        return Some(RemoteHit {
+            source: "lrcmux".into(),
+            synced: None,
+            plain: None,
+            instrumental: true,
+        });
+    }
+    let lines = value.get("lines")?.as_array()?;
+    let level = meta
+        .get("level")
+        .and_then(|item| item.as_str())
+        .unwrap_or("");
+    let mut synced = String::new();
+    let mut plain = String::new();
+    let mut any_time = false;
+    for line in lines {
+        let text = line
+            .get("text")
+            .and_then(|item| item.as_str())
+            .unwrap_or("")
+            .trim();
+        if text.is_empty() {
+            continue;
+        }
+        if !plain.is_empty() {
+            plain.push('\n');
+        }
+        plain.push_str(text);
+        if let Some(start) = line.get("start").and_then(|item| item.as_f64()) {
+            any_time = true;
+            if matches!(level, "line" | "word") || level.is_empty() {
+                synced.push_str(&lrc_stamp(start / 1000.0));
+                synced.push_str(text);
+                synced.push('\n');
+            }
+        }
+    }
+    if plain.trim().is_empty() {
+        return None;
+    }
+    let synced = if any_time && !synced.trim().is_empty() {
+        Some(synced)
+    } else {
+        None
+    };
+    Some(RemoteHit {
+        source: "lrcmux".into(),
+        synced,
+        plain: Some(plain),
+        instrumental: false,
+    })
+}
+
+pub fn parse_lyrics_ovh(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let lyrics = value.get("lyrics")?.as_str()?.trim();
+    if lyrics.is_empty() {
+        None
+    } else {
+        Some(lyrics.to_string())
+    }
+}
+
+fn hosted_get_url(origin: &str, query: &LrclibQuery) -> String {
+    let mut url = format!(
+        "{origin}/api/get?track_name={}&artist_name={}",
+        percent_encode(&query.track_name),
+        percent_encode(&query.artist_name)
+    );
+    if !query.album_name.trim().is_empty() {
+        url.push_str("&album_name=");
+        url.push_str(&percent_encode(&query.album_name));
+    }
+    if let Some(duration) = query.duration {
+        url.push_str(&format!("&duration={duration}"));
+    }
+    url
+}
+
+fn hosted_search_url(origin: &str, query: &LrclibQuery) -> String {
+    let mut url = format!(
+        "{origin}/api/search?track_name={}",
+        percent_encode(&query.track_name)
+    );
+    if !query.artist_name.trim().is_empty() {
+        url.push_str("&artist_name=");
+        url.push_str(&percent_encode(&query.artist_name));
+    }
+    if !query.album_name.trim().is_empty() {
+        url.push_str("&album_name=");
+        url.push_str(&percent_encode(&query.album_name));
+    }
+    url
+}
+
+fn lrc_stamp(seconds: f64) -> String {
+    let total = if seconds.is_finite() && seconds > 0.0 {
+        seconds
+    } else {
+        0.0
+    };
+    let mins = (total / 60.0).floor() as u32;
+    let secs = total - f64::from(mins) * 60.0;
+    format!("[{mins:02}:{secs:05.2}]")
 }
 
 pub fn lrclib_search_url(query: &LrclibQuery) -> String {
@@ -645,13 +849,141 @@ fn collapse_spaces(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn strip_feat_clauses(input: &str) -> String {
+    let lower = input.to_lowercase();
+    const MARKERS: &[&str] = &[
+        " (feat.",
+        " (feat ",
+        " (ft.",
+        " (ft ",
+        " (featuring ",
+        " [feat.",
+        " [feat ",
+        " [ft.",
+        " [ft ",
+        " [featuring ",
+        " feat.",
+        " feat ",
+        " featuring ",
+        " ft. ",
+        " ft ",
+    ];
+    let mut cut = None;
+    for marker in MARKERS {
+        if let Some(index) = lower.find(marker) {
+            cut = Some(cut.map_or(index, |current: usize| current.min(index)));
+        }
+    }
+    match cut {
+        Some(index) if index > 0 => input[..index].trim().to_string(),
+        _ => input.to_string(),
+    }
+}
+
+fn strip_pipe_noise(input: &str) -> String {
+    if !input.contains('|') {
+        return input.to_string();
+    }
+    let kept: Vec<&str> = input
+        .split('|')
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && !segment_is_noise(part))
+        .collect();
+    if kept.is_empty() {
+        input.to_string()
+    } else {
+        kept.join(" ")
+    }
+}
+
+fn segment_is_noise(part: &str) -> bool {
+    let trimmed = part.trim_matches(|ch: char| matches!(ch, '(' | ')' | '[' | ']'));
+    is_title_noise(&trimmed.to_lowercase())
+}
+
+fn strip_wrapped_noise(title: &str) -> String {
+    let mut title = title.to_string();
+    loop {
+        let trimmed = title.trim();
+        let Some(open) = trimmed.rfind(['(', '[']) else {
+            break;
+        };
+        let closer = if trimmed[open..].starts_with('(') {
+            ')'
+        } else {
+            ']'
+        };
+        if !trimmed.ends_with(closer) {
+            break;
+        }
+        let inner = trimmed[open + 1..trimmed.len() - 1].trim().to_lowercase();
+        if !is_title_noise(&inner) && !is_youtube_id(&inner) {
+            break;
+        }
+        title = trimmed[..open].trim().to_string();
+        if title.is_empty() {
+            break;
+        }
+    }
+    title
+}
+
+fn strip_bare_suffix(title: &str) -> String {
+    const PHRASES: &[&str] = &[
+        "official music video",
+        "official lyric video",
+        "official audio",
+        "official video",
+        "video oficial",
+        "áudio oficial",
+        "audio oficial",
+        "clipe oficial",
+        "official lyrics",
+        "with lyrics",
+        "lyric video",
+        "lyrics video",
+        "lyrics",
+    ];
+    let mut title = title.to_string();
+    loop {
+        let lower = title.to_lowercase();
+        let mut next = None;
+        for phrase in PHRASES {
+            if lower.ends_with(phrase) && title.len() > phrase.len() {
+                let end = title.len() - phrase.len();
+                let head = title[..end].trim_end_matches(|ch: char| {
+                    ch.is_whitespace() || matches!(ch, '-' | '|' | '–' | '—' | ':')
+                });
+                if !head.is_empty() && head.len() < title.len() {
+                    next = Some(head.to_string());
+                    break;
+                }
+            }
+        }
+        match next {
+            Some(value) => title = value,
+            None => break,
+        }
+    }
+    title
+}
+
+fn is_youtube_id(value: &str) -> bool {
+    value.len() == 11
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
 fn is_title_noise(inner: &str) -> bool {
     const WORDS: &[&str] = &[
         "official",
         "video",
         "audio",
+        "áudio",
         "lyrics",
         "lyric",
+        "letra",
         "visualizer",
         "clipe",
         "oficial",
@@ -661,6 +993,8 @@ fn is_title_noise(inner: &str) -> bool {
         "remaster",
         "remastered",
         "topic",
+        "music",
+        "legendado",
     ];
     let words: Vec<&str> = inner
         .split(|ch: char| !ch.is_alphanumeric())
@@ -843,6 +1177,7 @@ mod tests {
             remote_synced: Some("[00:01.00]da rede"),
             remote_plain: Some("plain"),
             instrumental: false,
+            remote_source: "",
         });
         assert_eq!(embedded.source, "embedded");
         assert!(!embedded.synced);
@@ -1001,6 +1336,61 @@ mod tests {
         assert_eq!(clean_track_query("Canção (Official Video)"), "Canção");
         assert_eq!(clean_track_query("Canção (Official Audio) [4K]"), "Canção");
         assert_eq!(clean_track_query("Canção (Live)"), "Canção (Live)");
+        assert_eq!(
+            clean_track_query("Canção (feat. Alguém) [Video]"),
+            "Canção"
+        );
+        assert_eq!(
+            clean_track_query("Canção feat. Alguém | Official Video"),
+            "Canção"
+        );
+        assert_eq!(clean_track_query("Canção lyrics"), "Canção");
+        assert_eq!(clean_artist_query("Banda - Topic"), "Banda");
+        assert_eq!(clean_artist_query("Banda VEVO"), "Banda");
+    }
+
+    #[test]
+    fn remote_providers_parse_without_scraping() {
+        let query = LrclibQuery {
+            track_name: "Canção".into(),
+            artist_name: "Banda".into(),
+            album_name: String::new(),
+            duration: Some(180),
+        };
+        assert!(lrcmux_get_url(&query).starts_with("https://api.lrcmux.dev/get?"));
+        assert!(karalyr_get_url(&query).starts_with("https://karalyr.com/api/get?"));
+        assert_eq!(
+            lyrics_ovh_url("Banda", "Canção"),
+            "https://api.lyrics.ovh/v1/Banda/Can%C3%A7%C3%A3o"
+        );
+        let mux = parse_lrcmux_payload(
+            r#"{"meta":{"level":"line","instrumental":false},"lines":[{"text":"oi","start":1500}]}"#,
+        )
+        .unwrap();
+        assert_eq!(mux.source, "lrcmux");
+        assert_eq!(mux.synced.as_deref(), Some("[00:01.50]oi\n"));
+        assert!(parse_lrcmux_payload(r#"{"meta":{"instrumental":true},"lines":[]}"#)
+            .unwrap()
+            .instrumental);
+        assert_eq!(
+            parse_lyrics_ovh(r#"{"lyrics":"linha um\nlinha dois"}"#).as_deref(),
+            Some("linha um\nlinha dois")
+        );
+        assert!(parse_lyrics_ovh(r#"{"error":"No lyrics found"}"#).is_none());
+        let shaped = hit_from_lrclib(
+            &parse_lrclib_payload(
+                r#"{"trackName":"Canção","artistName":"Banda","syncedLyrics":"[00:01.00]oi","plainLyrics":"oi","instrumental":false}"#,
+            )[0],
+            "karalyr",
+        );
+        assert!(remote_hit_is_useful(&shaped));
+        assert_eq!(shaped.source, "karalyr");
+        let resolved = resolve_lyrics(LyricInputs {
+            remote_synced: shaped.synced.as_deref(),
+            remote_source: "karalyr",
+            ..LyricInputs::default()
+        });
+        assert_eq!(resolved.source, "karalyr");
     }
 
     #[test]
@@ -1091,6 +1481,7 @@ mod tests {
             instrumental: false,
             synced: Some("[00:01.00]oi".into()),
             plain: Some("oi".into()),
+            source: String::new(),
         };
         write_lyrics_cache(&dir, &key, &hit).unwrap();
         assert_eq!(
@@ -1104,6 +1495,7 @@ mod tests {
             instrumental: false,
             synced: None,
             plain: None,
+            source: String::new(),
         };
         write_lyrics_cache(&dir, &key, &miss).unwrap();
         assert_eq!(
