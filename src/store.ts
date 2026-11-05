@@ -45,6 +45,7 @@ export interface AppState {
   tools: ToolStatus
   searchQuery: string
   searchHits: SearchHit[]
+  searchFormat: "mp3" | "mp4"
   convertInput: string
   convertPreset: ConvertPreset
   convertBitrate: string
@@ -90,6 +91,7 @@ function emptyState(): AppState {
     tools: emptyTools,
     searchQuery: "",
     searchHits: [],
+    searchFormat: "mp4",
     convertInput: "",
     convertPreset: "mp3",
     convertBitrate: "192k",
@@ -275,10 +277,10 @@ function mockJob(item: EnqueueItem, index: number): Job {
     sectionStart: item.sectionStart,
     sectionEnd: item.sectionEnd,
     speedLimit: item.speedLimit || config.globalSpeed || undefined,
-    audioOnly: config.audioOnly,
-    audioFormat: config.audioFormat,
+    audioOnly: item.audioOnly ?? config.audioOnly,
+    audioFormat: item.audioFormat ?? config.audioFormat,
     quality: config.quality,
-    container: config.container,
+    container: item.container ?? config.container,
   }
 }
 
@@ -569,7 +571,18 @@ export async function runSearch() {
 }
 
 export async function enqueueHit(hit: SearchHit) {
-  await enqueueItems([{ url: hit.url, title: hit.title, thumbnail: hit.thumbnail, duration: hit.duration }])
+  const format = getState().searchFormat
+  await enqueueItems([
+    {
+      url: hit.url,
+      title: hit.title,
+      thumbnail: hit.thumbnail,
+      duration: hit.duration,
+      audioOnly: format === "mp3",
+      audioFormat: format === "mp3" ? "mp3" : undefined,
+      container: format === "mp4" ? "mp4" : undefined,
+    },
+  ])
 }
 
 export async function startConvert() {

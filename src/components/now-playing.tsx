@@ -1,9 +1,9 @@
 import type { ReactNode } from "react"
 import { formatClock } from "../lib/format"
-import { displayArtist, displayTitle, playNext, playPrevious, seek, togglePlayback, usePlayer } from "../lib/player"
+import { displayArtist, displayTitle, playNext, playPrevious, seek, setVolume, toggleMute, togglePlayback, usePlayer } from "../lib/player"
 import { go, useT } from "../store"
 import { cn } from "../lib/cn"
-import { IconNext, IconPause, IconPlay, IconPrev } from "./player-icons"
+import { IconNext, IconPause, IconPlay, IconPrev, IconVolume } from "./player-icons"
 import { Scrubber } from "./scrubber"
 import { Thumb } from "./thumb"
 
@@ -74,6 +74,20 @@ export function NowPlaying() {
           <RoundButton label={t("player_next")} disabled={idle} onClick={playNext}>
             <IconNext className="h-4 w-4" />
           </RoundButton>
+        </div>
+        <div className="flex w-[132px] shrink-0 items-center gap-1">
+          <button
+            type="button"
+            aria-label={player.muted || player.volume === 0 ? t("player_unmute") : t("player_mute")}
+            aria-pressed={player.muted || player.volume === 0}
+            onClick={toggleMute}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-soft hover:text-ink"
+          >
+            <IconVolume className="h-4 w-4" muted={player.muted || player.volume === 0} />
+          </button>
+          <div className="min-w-0 flex-1">
+            <Scrubber value={player.muted ? 0 : player.volume} max={1} label={t("player_volume")} onChange={setVolume} />
+          </div>
         </div>
         <span className="hidden w-16 text-right text-[12px] tabular-nums text-muted sm:block">
           {idle ? "" : formatClock(player.currentTime)}

@@ -121,7 +121,11 @@ async fn lyrics_cache_dir(app: &tauri::AppHandle) -> PathBuf {
 
 async fn fetch_lrclib(query: &LrclibQuery, now: i64) -> Option<LyricsCacheEntry> {
     let client = reqwest::Client::builder()
-        .user_agent("bob-baixa/0.2.0 (https://github.com/goszc/bob-baixa)")
+        .user_agent(concat!(
+            "bob-baixa/",
+            env!("CARGO_PKG_VERSION"),
+            " (https://github.com/goszc/bob-baixa)"
+        ))
         .timeout(Duration::from_secs(8))
         .build()
         .ok()?;

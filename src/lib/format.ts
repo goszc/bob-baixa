@@ -68,7 +68,7 @@ export function nextIsoFromClock(hhmm: string): string | null {
 }
 
 export function isMediaPath(path: string): boolean {
-  return /\.(mp4|mkv|webm|mov|avi|m4v|mp3|m4a|wav|flac|opus|ogg)$/i.test(path)
+  return /\.(mp4|mkv|webm|mov|avi|m4v|mp3|m4a|aac|wav|flac|opus|ogg|oga)$/i.test(path)
 }
 
 export function isTextPath(path: string): boolean {

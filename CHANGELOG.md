@@ -1,5 +1,14 @@
 # changelog
 
+## 0.3.0
+
+- player para o que já foi baixado. toca áudio e vídeo, com a barra de agora tocando sempre visível. volume e mudo ficam nessa barra, e o último volume continua salvo
+- letras das tags, de um .lrc ao lado ou do lrclib
+- a biblioteca do player só mostra o que ele toca (mp3, mp4 e os outros formatos que já aceita) dentro da pasta escolhida em configurações
+- na busca, dá para escolher mp3 ou mp4 antes de mandar para a fila
+- se o youtube recusar as legendas com erro 429, o download tenta de novo com espera. se continuar limitado, o arquivo termina sem legendas e o app avisa, em vez de falhar
+- licença mit
+
 ## 0.2.0
 
 - vários downloads ao mesmo tempo. o padrão continua 2, e dá para escolher de 1 a 4. pausar, continuar e tentar de novo respeitam as vagas
