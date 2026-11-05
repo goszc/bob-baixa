@@ -130,6 +130,7 @@ export interface Job {
   downloaded?: number
   total?: number
   error?: string
+  warning?: string
   outputPath?: string
   createdAt: string
   scheduledAt?: string
@@ -201,6 +202,9 @@ export interface EnqueueItem {
   sectionEnd?: string
   speedLimit?: string
   scheduledAt?: string
+  audioOnly?: boolean
+  container?: string
+  audioFormat?: string
 }
 
 export const defaultConfig: Config = {

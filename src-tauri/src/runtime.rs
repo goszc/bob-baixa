@@ -10,8 +10,9 @@ use bob_core::{
     detect_browsers, extract_urls, ffmpeg_args, is_clipboard_launch, iso_in_future,
     looks_like_auth, looks_like_cookie_lock, new_id, now_iso, output_for, parse_ffmpeg_seconds,
     parse_json_value_text, parse_media, parse_output_path, parse_progress, parse_search,
-    parse_title_line, pick_browser, text, url_from_link, BobEvent, Config, ConvertJob, EnqueueItem,
-    HistoryEntry, Job, MediaItem, SearchHit, ToolStatus, Watch,
+    parse_title_line, pick_browser, subtitle_rate_limit_only, subtitle_retry_delay_secs,
+    subtitle_skip_warning, text, url_from_link, BobEvent, Config, ConvertJob, EnqueueItem,
+    HistoryEntry, Job, MediaItem, SearchHit, ToolStatus, Watch, SUBTITLE_RATE_LIMIT_ATTEMPTS,
 };
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -414,6 +415,7 @@ pub async fn job_action(app: &AppHandle, id: String, action: &str) -> Result<(),
                     if action == "retry" {
                         job.progress = 0.0;
                         job.error = None;
+                        job.warning = None;
                         job.downloaded = None;
                         job.speed = None;
                         job.eta = None;
@@ -1009,9 +1011,124 @@ async fn run_download(app: AppHandle, id: String) {
     if !job.output_dir.trim().is_empty() {
         let _ = std::fs::create_dir_all(&job.output_dir);
     }
-    let args = build_download_args(&job, &ffmpeg.to_string_lossy());
+
+    let mut attempt = 0u32;
+    let mut without_subtitles = false;
+    let end = loop {
+        let mut current = job.clone();
+        if without_subtitles {
+            current.subtitles = false;
+        }
+        match run_ytdlp_attempt(&app, &id, &bin, &ffmpeg, &current, &control).await {
+            Attempt::Stopped(reason) => break Attempt::Stopped(reason),
+            Attempt::Spawn(error) => break Attempt::Spawn(error),
+            Attempt::Ok(path) => {
+                let warning = if without_subtitles {
+                    let language = app
+                        .state::<AppState>()
+                        .inner
+                        .clone()
+                        .lock_owned()
+                        .await
+                        .config
+                        .language
+                        .clone();
+                    Some(subtitle_skip_warning(&language))
+                } else {
+                    None
+                };
+                break Attempt::Done { path, warning };
+            }
+            Attempt::Failed(tail) => {
+                // Captions are requested before the video. A 429 there used to abort the file.
+                if !without_subtitles && job.subtitles && subtitle_rate_limit_only(&tail) {
+                    if attempt + 1 < SUBTITLE_RATE_LIMIT_ATTEMPTS {
+                        attempt += 1;
+                        if !backoff_or_stop(&control, subtitle_retry_delay_secs(attempt)).await {
+                            break Attempt::Stopped(control.reason.load(Ordering::Relaxed));
+                        }
+                        continue;
+                    }
+                    without_subtitles = true;
+                    continue;
+                }
+                break Attempt::Failed(tail);
+            }
+            Attempt::Done { .. } => break Attempt::Spawn("estado inesperado".into()),
+        }
+    };
+
+    app.state::<AppState>()
+        .inner
+        .clone()
+        .lock_owned()
+        .await
+        .controls
+        .remove(&id);
+
+    match end {
+        Attempt::Spawn(error) => {
+            finish(&app, &id, "failed", Some(error), None, None).await;
+        }
+        Attempt::Stopped(reason) => finish_stopped(&app, &id, reason).await,
+        Attempt::Done { path, warning } => {
+            finish(&app, &id, "done", None, path, warning).await;
+        }
+        Attempt::Failed(tail) => fail_download(&app, &id, &tail).await,
+        Attempt::Ok(_) => {
+            finish(&app, &id, "failed", Some("estado inesperado".into()), None, None).await;
+        }
+    }
+}
+
+enum Attempt {
+    Spawn(String),
+    Stopped(u8),
+    Ok(Option<String>),
+    Done {
+        path: Option<String>,
+        warning: Option<String>,
+    },
+    Failed(String),
+}
+
+async fn backoff_or_stop(control: &Control, secs: u64) -> bool {
+    if control.reason.load(Ordering::Relaxed) != 0 {
+        return false;
+    }
+    let sleep = tokio::time::sleep(Duration::from_secs(secs));
+    tokio::pin!(sleep);
+    tokio::select! {
+        _ = &mut sleep => control.reason.load(Ordering::Relaxed) == 0,
+        _ = control.notify.notified() => false,
+    }
+}
+
+async fn finish_stopped(app: &AppHandle, id: &str, reason: u8) {
+    if reason == RETRY {
+        requeue(app, id, true).await;
+    } else if reason == PAUSE {
+        finish(app, id, "paused", None, None, None).await;
+    } else {
+        finish(app, id, "cancelled", None, None, None).await;
+    }
+}
+
+async fn run_ytdlp_attempt(
+    app: &AppHandle,
+    id: &str,
+    bin: &Path,
+    ffmpeg: &Path,
+    job: &Job,
+    control: &Arc<Control>,
+) -> Attempt {
+    {
+        let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        inner.logs.remove(id);
+    }
+    let args = build_download_args(job, &ffmpeg.to_string_lossy());
     let mut child = match {
-        let mut cmd = tokio_command(&bin);
+        let mut cmd = tokio_command(bin);
         cmd.args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -1019,30 +1136,20 @@ async fn run_download(app: AppHandle, id: String) {
         cmd.spawn()
     } {
         Ok(child) => child,
-        Err(error) => {
-            app.state::<AppState>()
-                .inner
-                .clone()
-                .lock_owned()
-                .await
-                .controls
-                .remove(&id);
-            finish(&app, &id, "failed", Some(error.to_string()), None).await;
-            return;
-        }
+        Err(error) => return Attempt::Spawn(error.to_string()),
     };
     let pid = child.id().unwrap_or(0);
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let app_out = app.clone();
-    let id_out = id.clone();
+    let id_out = id.to_string();
     let reader_out = tauri::async_runtime::spawn(async move {
         if let Some(stdout) = stdout {
             read_pipe(app_out, id_out, stdout, false).await;
         }
     });
     let app_err = app.clone();
-    let id_err = id.clone();
+    let id_err = id.to_string();
     let reader_err = tauri::async_runtime::spawn(async move {
         if let Some(stderr) = stderr {
             read_pipe(app_err, id_err, stderr, true).await;
@@ -1057,27 +1164,11 @@ async fn run_download(app: AppHandle, id: String) {
     });
     let status = child.wait().await;
     killer.abort();
-    reader_out.abort();
-    reader_err.abort();
+    let _ = reader_out.await;
+    let _ = reader_err.await;
     let reason = control.reason.load(Ordering::Relaxed);
-    app.state::<AppState>()
-        .inner
-        .clone()
-        .lock_owned()
-        .await
-        .controls
-        .remove(&id);
-    if reason == RETRY {
-        requeue(&app, &id, true).await;
-        return;
-    }
-    if reason == PAUSE {
-        finish(&app, &id, "paused", None, None).await;
-        return;
-    }
-    if reason == CANCEL {
-        finish(&app, &id, "cancelled", None, None).await;
-        return;
+    if reason != 0 {
+        return Attempt::Stopped(reason);
     }
     let code_ok = status
         .as_ref()
@@ -1092,90 +1183,91 @@ async fn run_download(app: AppHandle, id: String) {
                 .find(|job| job.id == id)
                 .and_then(|job| job.output_path.clone())
         };
-        finish(&app, &id, "done", None, path).await;
-    } else if reason == PAUSE {
-        finish(&app, &id, "paused", None, None).await;
-    } else if reason == CANCEL {
-        finish(&app, &id, "cancelled", None, None).await;
-    } else {
-        let tail = app
-            .state::<AppState>()
-            .inner
-            .clone()
-            .lock_owned()
-            .await
-            .logs
-            .get(&id)
-            .cloned()
-            .unwrap_or_default();
-        let (language, retried, preference) = {
-            let inner = app.state::<AppState>().inner.clone().lock_owned().await;
-            let job = inner.jobs.iter().find(|job| job.id == id);
-            (
-                inner.config.language.clone(),
-                job.map(|job| job.cookie_retried).unwrap_or(true),
-                job.map(|job| job.cookies_browser.clone())
-                    .unwrap_or_default(),
-            )
-        };
-        if looks_like_cookie_lock(&tail) {
-            finish(&app, &id, "failed", Some(cookie_lock_hint(&language)), None).await;
-            return;
+        return Attempt::Ok(path);
+    }
+    let tail = app
+        .state::<AppState>()
+        .inner
+        .clone()
+        .lock_owned()
+        .await
+        .logs
+        .get(id)
+        .cloned()
+        .unwrap_or_default();
+    Attempt::Failed(tail)
+}
+
+async fn fail_download(app: &AppHandle, id: &str, tail: &str) {
+    let (language, retried, preference) = {
+        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        let job = inner.jobs.iter().find(|job| job.id == id);
+        (
+            inner.config.language.clone(),
+            job.map(|job| job.cookie_retried).unwrap_or(true),
+            job.map(|job| job.cookies_browser.clone())
+                .unwrap_or_default(),
+        )
+    };
+    if looks_like_cookie_lock(tail) {
+        finish(app, id, "failed", Some(cookie_lock_hint(&language)), None, None).await;
+        return;
+    }
+    let (update_retried, auto_update) = {
+        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        let job = inner.jobs.iter().find(|job| job.id == id);
+        (
+            job.map(|job| job.update_retried).unwrap_or(true),
+            inner.config.auto_update,
+        )
+    };
+    if auto_update && !update_retried && bob_core::looks_like_extractor(tail) {
+        let _ = crate::updates::refresh_ytdlp(app).await;
+        let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        if let Some(job) = inner.jobs.iter_mut().find(|job| job.id == id) {
+            job.update_retried = true;
+            job.state = "queued".into();
+            job.error = None;
+            job.warning = None;
+            job.progress = 0.0;
         }
-        let (update_retried, auto_update) = {
-            let inner = app.state::<AppState>().inner.clone().lock_owned().await;
-            let job = inner.jobs.iter().find(|job| job.id == id);
-            (
-                job.map(|job| job.update_retried).unwrap_or(true),
-                inner.config.auto_update,
-            )
-        };
-        if auto_update && !update_retried && bob_core::looks_like_extractor(&tail) {
-            let _ = crate::updates::refresh_ytdlp(&app).await;
+        save(&inner);
+        let jobs = inner.jobs.clone();
+        drop(inner);
+        emit(app, &BobEvent::Jobs { jobs });
+        schedule_pump(app);
+        return;
+    }
+    let can_retry = !retried && (preference == "auto" || preference.is_empty());
+    if can_retry && looks_like_auth(tail) {
+        if let Some(browser) = pick_browser("auto", &detect_browsers()) {
             let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
             if let Some(job) = inner.jobs.iter_mut().find(|job| job.id == id) {
-                job.update_retried = true;
+                job.cookies_browser = browser;
+                job.cookie_retried = true;
                 job.state = "queued".into();
                 job.error = None;
+                job.warning = None;
                 job.progress = 0.0;
             }
             save(&inner);
             let jobs = inner.jobs.clone();
             drop(inner);
-            emit(&app, &BobEvent::Jobs { jobs });
-            schedule_pump(&app);
+            emit(app, &BobEvent::Jobs { jobs });
+            schedule_pump(app);
             return;
         }
-        let can_retry = !retried && (preference == "auto" || preference.is_empty());
-        if can_retry && looks_like_auth(&tail) {
-            if let Some(browser) = pick_browser("auto", &detect_browsers()) {
-                let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
-                if let Some(job) = inner.jobs.iter_mut().find(|job| job.id == id) {
-                    job.cookies_browser = browser;
-                    job.cookie_retried = true;
-                    job.state = "queued".into();
-                    job.error = None;
-                    job.progress = 0.0;
-                }
-                save(&inner);
-                let jobs = inner.jobs.clone();
-                drop(inner);
-                emit(&app, &BobEvent::Jobs { jobs });
-                schedule_pump(&app);
-                return;
-            }
-        }
-        let message = if tail.trim().is_empty() {
-            text(&language, "o download falhou.", "the download failed.")
-        } else {
-            tail.lines()
-                .rev()
-                .find(|line| !line.trim().is_empty())
-                .unwrap_or("erro")
-                .to_string()
-        };
-        finish(&app, &id, "failed", Some(message), None).await;
     }
+    let message = if tail.trim().is_empty() {
+        text(&language, "o download falhou.", "the download failed.")
+    } else {
+        tail.lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("erro")
+            .to_string()
+    };
+    finish(app, id, "failed", Some(message), None, None).await;
 }
 
 pub async fn cache_thumb(app: &AppHandle, url: &str) -> Result<String, String> {
@@ -1302,6 +1394,7 @@ async fn finish(
     state: &str,
     error: Option<String>,
     path: Option<String>,
+    warning: Option<String>,
 ) {
     let mut notify_body = None;
     let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
@@ -1310,9 +1403,11 @@ async fn finish(
     let mut record = None;
     if let Some(job) = inner.jobs.iter_mut().find(|job| job.id == id) {
         job.state = state.into();
+        job.warning = None;
         if state == "done" {
             job.progress = 1.0;
             job.error = None;
+            job.warning = warning.clone();
             if path.is_some() {
                 job.output_path = path.clone();
             }
@@ -1321,6 +1416,11 @@ async fn finish(
             job.error = Some(error);
         }
         if state == "done" || state == "failed" {
+            let note = if state == "done" {
+                job.warning.clone().unwrap_or_else(|| text(&language, "concluído", "done"))
+            } else {
+                text(&language, "falhou", "failed")
+            };
             record = Some(HistoryEntry {
                 id: new_id("hist"),
                 title: job.title.clone(),
@@ -1328,18 +1428,14 @@ async fn finish(
                 path: job.output_path.clone(),
                 at: now_iso(),
                 ok: state == "done",
-                detail: job.error.clone(),
+                detail: if state == "done" {
+                    job.warning.clone()
+                } else {
+                    job.error.clone()
+                },
             });
             if notifications {
-                notify_body = Some(format!(
-                    "{} — {}",
-                    job.title,
-                    if state == "done" {
-                        text(&language, "concluído", "done")
-                    } else {
-                        text(&language, "falhou", "failed")
-                    }
-                ));
+                notify_body = Some(format!("{} — {}", job.title, note));
             }
         }
     }
@@ -1405,6 +1501,7 @@ async fn requeue(app: &AppHandle, id: &str, reset: bool) {
     };
     job.state = "queued".into();
     job.error = None;
+    job.warning = None;
     job.speed = None;
     job.eta = None;
     if reset {
@@ -2154,8 +2251,9 @@ mod tests {
     #[test]
     fn bundled_notes_match_this_version() {
         let notes = release_notes();
-        assert!(notes.contains("## 0.2.0"), "{notes}");
-        assert!(notes.contains("predefini"));
-        assert!(!notes.contains("## 0.1.0"));
+        assert!(notes.contains("## 0.3.0"), "{notes}");
+        assert!(notes.contains("429"));
+        assert!(notes.contains("lrclib"));
+        assert!(!notes.contains("## 0.2.0"));
     }
 }

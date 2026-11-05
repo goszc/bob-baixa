@@ -29,7 +29,7 @@ export function History() {
                 <p className="mt-1 text-[13px] text-muted">
                   {formatWhen(entry.at, app.config.language)} · {entry.ok ? t("state_done") : t("state_failed")}
                 </p>
-                {entry.detail ? <p className="mt-1 text-[13px] text-danger">{entry.detail}</p> : null}
+                {entry.detail ? <p className={entry.ok ? "mt-1 text-[13px] text-ink" : "mt-1 text-[13px] text-danger"}>{entry.detail}</p> : null}
               </div>
               {entry.path ? (
                 <Button size="sm" variant="outline" onClick={() => void openOutput(entry.path!)}>

@@ -1,4 +1,5 @@
 import { PageHeader } from "../components/page-header"
+import { Segmented } from "../components/segmented"
 import { Thumb } from "../components/thumb"
 import { Button } from "../components/ui/button"
 import { Input } from "../components/ui/input"
@@ -27,6 +28,20 @@ export function Search() {
           {app.busy === "search" ? t("searching") : t("search_btn")}
         </Button>
       </form>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[14px]">{t("search_format")}</p>
+          <p className="mt-1 text-[13px] text-muted">{t("search_format_hint")}</p>
+        </div>
+        <Segmented
+          value={app.searchFormat}
+          onChange={(value) => setField("searchFormat", value)}
+          options={[
+            { value: "mp3", label: "mp3" },
+            { value: "mp4", label: "mp4" },
+          ]}
+        />
+      </div>
       {app.error && app.page === "search" ? <p className="mt-3 text-[13px] text-danger">{app.error}</p> : null}
       {app.searchHits.length === 0 ? (
         <div className="border-t border-line mt-8 py-16">

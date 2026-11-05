@@ -6,7 +6,7 @@ import { Thumb } from "../components/thumb"
 import { Input } from "../components/ui/input"
 import { formatClock } from "../lib/format"
 import type { Key } from "../lib/i18n"
-import { collectTracks, previewPlayerTracks, type Track } from "../lib/library"
+import { collectTracks, type Track } from "../lib/library"
 import { cn } from "../lib/cn"
 import {
   activeLine,
@@ -28,7 +28,7 @@ import {
   toggleShuffle,
   usePlayer,
 } from "../lib/player"
-import { openOutput, PREVIEW, useApp, useT } from "../store"
+import { openOutput, useApp, useT } from "../store"
 
 const SOURCE_KEY: Record<string, Key> = {
   embedded: "lyrics_source_embedded",
@@ -166,10 +166,10 @@ export function Player() {
   const player = usePlayer()
   const t = useT()
   const [query, setQuery] = useState("")
-  const library = useMemo(() => {
-    const downloaded = collectTracks(app.jobs, app.history, app.convertJob)
-    return PREVIEW ? [...previewPlayerTracks, ...downloaded] : downloaded
-  }, [app.jobs, app.history, app.convertJob])
+  const library = useMemo(
+    () => collectTracks(app.jobs, app.history, app.convertJob, app.config.outputDir),
+    [app.jobs, app.history, app.convertJob, app.config.outputDir],
+  )
   const visible = library.filter((track) => matches(track, query))
   const queue = orderedTracks(player)
   const track = currentTrack(player)

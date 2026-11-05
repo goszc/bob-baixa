@@ -74,12 +74,26 @@ function emptyLyrics(): TrackLyrics {
 
 function readVolume() {
   if (typeof localStorage === "undefined") return 0.9
-  const value = Number(localStorage.getItem("bob-baixa-volume"))
+  const raw = localStorage.getItem("bob-baixa-volume")
+  if (raw == null || raw.trim() === "") return 0.9
+  const value = Number(raw)
   if (!Number.isFinite(value)) return 0.9
   return Math.min(1, Math.max(0, value))
 }
 
+function readMuted(volume: number) {
+  if (typeof localStorage === "undefined") return volume === 0
+  if (localStorage.getItem("bob-baixa-muted") === "1") return true
+  return volume === 0
+}
+
+function persistLevel(volume: number, muted: boolean) {
+  localStorage.setItem("bob-baixa-volume", String(volume))
+  localStorage.setItem("bob-baixa-muted", muted ? "1" : "0")
+}
+
 function initial(): PlayerState {
+  const volume = readVolume()
   return {
     queue: [],
     order: [],
@@ -87,8 +101,8 @@ function initial(): PlayerState {
     playing: false,
     currentTime: 0,
     duration: 0,
-    volume: readVolume(),
-    muted: false,
+    volume,
+    muted: readMuted(volume),
     shuffle: false,
     repeat: "off",
     panel: "library",
@@ -461,14 +475,17 @@ export function seek(seconds: number) {
 
 export function setVolume(volume: number) {
   const next = Math.min(1, Math.max(0, volume))
-  setPlayer({ volume: next, muted: next === 0 })
+  const muted = next === 0
+  setPlayer({ volume: next, muted })
   applyVolume()
-  localStorage.setItem("bob-baixa-volume", String(next))
+  persistLevel(next, muted)
 }
 
 export function toggleMute() {
-  setPlayer({ muted: !player.muted })
+  const muted = !player.muted
+  setPlayer({ muted })
   applyVolume()
+  persistLevel(player.volume, muted)
 }
 
 export function toggleShuffle() {

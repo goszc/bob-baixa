@@ -696,6 +696,48 @@ pub fn looks_like_extractor(message: &str) -> bool {
         || text.contains("http error 403")
 }
 
+/// yt-dlp downloads captions before the video and does not retry HTTP 429.
+/// This many attempts still include subtitles. After that, the file is saved without them.
+pub const SUBTITLE_RATE_LIMIT_ATTEMPTS: u32 = 3;
+
+pub fn subtitle_rate_limited(message: &str) -> bool {
+    let text = message.to_ascii_lowercase();
+    let captions = text.contains("subtitle");
+    let limited = text.contains("429") || text.contains("too many requests");
+    captions && limited
+}
+
+/// True only when every `ERROR:` line is a subtitle 429. A video or extractor error still fails the download.
+pub fn subtitle_rate_limit_only(log: &str) -> bool {
+    let mut saw = false;
+    for line in log.lines() {
+        let trimmed = line.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        if !lower.starts_with("error:") {
+            continue;
+        }
+        if subtitle_rate_limited(trimmed) {
+            saw = true;
+        } else {
+            return false;
+        }
+    }
+    saw
+}
+
+/// Seconds to wait before retry `attempt` (1, 2, 3…): 2s, 4s, 8s.
+pub fn subtitle_retry_delay_secs(attempt: u32) -> u64 {
+    2u64.saturating_pow(attempt.clamp(1, 5))
+}
+
+pub fn subtitle_skip_warning(language: &str) -> String {
+    crate::text(
+        language,
+        "o arquivo foi baixado, mas as legendas não: o youtube limitou os pedidos (429).",
+        "the file was downloaded, but the subtitles were not: youtube rate-limited the request (429).",
+    )
+}
+
 pub fn cookie_lock_hint(language: &str) -> String {
     crate::text(
         language,
@@ -898,6 +940,7 @@ mod tests {
         assert!(joined.contains("--limit-rate 2M"));
         assert!(joined.contains("--merge-output-format mp4"));
         assert!(joined.contains("height<=1080"));
+        assert!(joined.contains("--write-subs"));
         assert!(joined.contains("--embed-subs"));
         assert!(joined.contains("--sponsorblock-remove sponsor,intro"));
         assert!(joined.contains("--cookies-from-browser chrome"));
@@ -916,6 +959,42 @@ mod tests {
         assert!(audio_args.contains("--audio-format mp3"));
         assert!(audio_args.contains("--audio-quality 192K"));
         assert!(audio_args.contains("-x"));
+
+        let mut bare = sample_job();
+        bare.subtitles = false;
+        let bare_args = build_download_args(&bare, "C:/tools").join(" ");
+        assert!(!bare_args.contains("--write-subs"));
+        assert!(!bare_args.contains("--embed-subs"));
+    }
+
+    #[test]
+    fn subtitle_429_retries_then_skips_without_hiding_other_errors() {
+        let only = "ERROR: Unable to download video subtitles for 'pt': HTTP Error 429: Too Many Requests\n";
+        assert!(subtitle_rate_limited(only));
+        assert!(subtitle_rate_limit_only(only));
+        assert!(subtitle_rate_limit_only(
+            "WARNING: something else\nERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests\n"
+        ));
+        assert!(!subtitle_rate_limit_only(
+            "ERROR: Unable to download video subtitles for 'pt': HTTP Error 429: Too Many Requests\nERROR: Unable to download video data: HTTP Error 403: Forbidden\n"
+        ));
+        assert!(!subtitle_rate_limit_only(
+            "ERROR: HTTP Error 429: Too Many Requests\n"
+        ));
+        assert!(!subtitle_rate_limit_only("ERROR: Sign in to confirm your age\n"));
+        assert!(!subtitle_rate_limit_only(""));
+        assert!(!looks_like_extractor(only));
+        assert!(looks_like_extractor(
+            "ERROR: HTTP Error 403: Forbidden\n"
+        ));
+        assert_eq!(SUBTITLE_RATE_LIMIT_ATTEMPTS, 3);
+        assert_eq!(subtitle_retry_delay_secs(1), 2);
+        assert_eq!(subtitle_retry_delay_secs(2), 4);
+        assert_eq!(subtitle_retry_delay_secs(3), 8);
+        let warning = subtitle_skip_warning("pt");
+        assert!(warning.contains("429"));
+        assert!(warning.contains("legendas"));
+        assert!(!subtitle_skip_warning("en").contains("legendas"));
     }
 
     #[test]

@@ -107,6 +107,12 @@ fn default_sub_langs() -> String {
 pub const PARALLEL_MIN: u32 = 1;
 pub const PARALLEL_MAX: u32 = 4;
 
+fn chosen_text(override_value: Option<String>, fallback: &str) -> String {
+    override_value
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
 pub fn clamp_parallel(value: u32) -> u32 {
     value.clamp(PARALLEL_MIN, PARALLEL_MAX)
 }
@@ -179,6 +185,13 @@ pub struct EnqueueItem {
     pub speed_limit: Option<String>,
     #[serde(default)]
     pub scheduled_at: Option<String>,
+    /// Search can ask for mp3 or mp4 without changing the saved settings.
+    #[serde(default)]
+    pub audio_only: Option<bool>,
+    #[serde(default)]
+    pub container: Option<String>,
+    #[serde(default)]
+    pub audio_format: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +216,9 @@ pub struct Job {
     pub total: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Shown when the file is ready but something optional, such as subtitles, was skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_path: Option<String>,
     pub created_at: String,
@@ -454,6 +470,7 @@ impl Job {
             downloaded: None,
             total: None,
             error: None,
+            warning: None,
             output_path: None,
             created_at: now_iso(),
             scheduled_at,
@@ -470,10 +487,10 @@ impl Job {
                         Some(global.to_string())
                     }
                 }),
-            audio_only: config.audio_only,
+            audio_only: item.audio_only.unwrap_or(config.audio_only),
             quality: config.quality.clone(),
-            container: config.container.clone(),
-            audio_format: Some(config.audio_format.clone()),
+            container: chosen_text(item.container.clone(), &config.container),
+            audio_format: Some(chosen_text(item.audio_format.clone(), &config.audio_format)),
             format_id: item
                 .format_id
                 .filter(|value| !value.is_empty() && value != "auto"),
@@ -586,5 +603,44 @@ mod tests {
         assert!(config.presets.is_empty());
         assert!(config.seen_version.is_empty());
         assert!(config.auto_update);
+    }
+
+    #[test]
+    fn search_can_choose_mp3_or_mp4_without_replacing_the_saved_settings() {
+        let mut config = Config::default();
+        config.audio_only = true;
+        config.audio_format = "flac".into();
+        config.container = "webm".into();
+        config.quality = "720".into();
+
+        let video = Job::from_item(
+            EnqueueItem {
+                url: "https://youtu.be/abc".into(),
+                audio_only: Some(false),
+                container: Some("mp4".into()),
+                ..EnqueueItem::default()
+            },
+            &config,
+            None,
+        );
+        assert!(!video.audio_only);
+        assert_eq!(video.container, "mp4");
+        assert_eq!(video.audio_format.as_deref(), Some("flac"));
+        assert_eq!(video.quality, "720");
+
+        let audio = Job::from_item(
+            EnqueueItem {
+                url: "https://youtu.be/abc".into(),
+                audio_only: Some(true),
+                audio_format: Some("mp3".into()),
+                ..EnqueueItem::default()
+            },
+            &config,
+            None,
+        );
+        assert!(audio.audio_only);
+        assert_eq!(audio.audio_format.as_deref(), Some("mp3"));
+        assert_eq!(audio.container, "webm");
+        assert!(audio.warning.is_none());
     }
 }

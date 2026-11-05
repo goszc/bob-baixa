@@ -35,15 +35,29 @@ function norm(path: string) {
   return path.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase()
 }
 
+/** Settings stores this as `outputDir`. A file counts only when it is inside that folder. */
+export function isInsideLibrary(path: string, outputDir: string): boolean {
+  const root = canonical(outputDir)
+  const file = canonical(path)
+  if (!root || !file || file === root) return false
+  return file.startsWith(`${root}/`)
+}
+
+function canonical(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return ""
+  return trimmed.replaceAll("\\", "/").replace(/\/+/g, "/").replace(/\/+$/, "").toLowerCase()
+}
+
 function stemTitle(path: string) {
   return fileName(path).replace(/\.[^.]+$/, "")
 }
 
-export function collectTracks(jobs: Job[], history: HistoryEntry[], convert: ConvertJob | null): Track[] {
+export function collectTracks(jobs: Job[], history: HistoryEntry[], convert: ConvertJob | null, outputDir: string): Track[] {
   const seen = new Set<string>()
   const tracks: Track[] = []
   const add = (track: Track) => {
-    if (!track.path || !isMediaPath(track.path)) return
+    if (!track.path || !isMediaPath(track.path) || !isInsideLibrary(track.path, outputDir)) return
     const key = norm(track.path)
     if (seen.has(key)) return
     seen.add(key)
@@ -91,58 +105,3 @@ export function collectTracks(jobs: Job[], history: HistoryEntry[], convert: Con
   }
   return tracks
 }
-
-const tone = "/preview/faixa.wav"
-
-export const previewPlayerTracks: Track[] = [
-  {
-    id: "preview-1",
-    path: tone,
-    title: "Faixa Exemplo",
-    artist: "Artista Genérico",
-    pageUrl: "https://www.youtube.com/watch?v=YF4wa9gB0cA",
-    thumbnail: "/cache/YF4wa9gB0cA.jpg",
-    duration: 8,
-    kind: "audio",
-  },
-  {
-    id: "preview-2",
-    path: tone,
-    title: "Música Dois",
-    artist: "Artista Genérico",
-    pageUrl: "https://www.youtube.com/watch?v=7xXWZcbGOP0",
-    thumbnail: "/cache/7xXWZcbGOP0.jpg",
-    duration: 8,
-    kind: "audio",
-  },
-  {
-    id: "preview-3",
-    path: tone,
-    title: "Música Três",
-    artist: "Artista Genérico",
-    pageUrl: "https://www.youtube.com/watch?v=N9xsbTE94YI",
-    thumbnail: "/cache/N9xsbTE94YI.jpg",
-    duration: 8,
-    kind: "audio",
-  },
-  {
-    id: "preview-4",
-    path: tone,
-    title: "Música Quatro",
-    artist: "Artista Genérico",
-    pageUrl: "https://www.youtube.com/watch?v=dvGOktfWWNU",
-    thumbnail: "/cache/dvGOktfWWNU.jpg",
-    duration: 8,
-    kind: "audio",
-  },
-  {
-    id: "preview-video",
-    path: "/preview/clip.mp4",
-    title: "Vídeo Exemplo",
-    artist: "Artista Genérico",
-    pageUrl: "https://www.youtube.com/watch?v=KS_TrJOQB-g",
-    thumbnail: "/cache/KS_TrJOQB-g.jpg",
-    duration: 6,
-    kind: "video",
-  },
-]

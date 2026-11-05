@@ -102,6 +102,7 @@ function JobRow({ job }: { job: Job }) {
             {job.scheduledAt && job.state === "scheduled" ? <span>{t("scheduled_for", { time: formatWhen(job.scheduledAt, app.config.language) })}</span> : null}
           </div>
           {job.error ? <p className="mt-2 text-[13px] text-danger">{job.error}</p> : null}
+          {!job.error && job.warning ? <p className="mt-2 text-[13px] text-ink">{job.warning}</p> : null}
           <div className="mt-3 flex flex-wrap gap-1">
             {job.state === "downloading" || job.state === "queued" ? (
               <Button size="sm" variant="ghost" onClick={() => void jobAction(job.id, "pause")}>
