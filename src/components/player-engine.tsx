@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
-import { attachMedia, getPlayer, playNext, playPrevious, seek, togglePlayback } from "../lib/player"
+import { isTauri } from "../lib/api"
+import { attachMedia, getPlayer, seek, systemControl, togglePlayback } from "../lib/player"
 
 function typingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
@@ -27,21 +28,40 @@ export function PlayerEngine() {
       if (event.metaKey || event.ctrlKey || event.altKey || typingTarget(event.target)) return
       if (event.target instanceof HTMLElement && event.target.closest("button, a")) return
       const player = getPlayer()
-      if (event.key === " " || event.code === "MediaPlayPause") {
+      if (event.key === " ") {
         event.preventDefault()
         togglePlayback()
+      } else if (event.code === "MediaPlayPause") {
+        event.preventDefault()
+        systemControl("toggle")
       } else if (event.key === "ArrowRight" || event.code === "MediaTrackNext") {
         event.preventDefault()
-        if (event.shiftKey || event.code === "MediaTrackNext") playNext()
+        if (event.shiftKey || event.code === "MediaTrackNext") systemControl("next")
         else seek(player.currentTime + 5)
       } else if (event.key === "ArrowLeft" || event.code === "MediaTrackPrevious") {
         event.preventDefault()
-        if (event.shiftKey || event.code === "MediaTrackPrevious") playPrevious()
+        if (event.shiftKey || event.code === "MediaTrackPrevious") systemControl("previous")
         else seek(Math.max(0, player.currentTime - 5))
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let stop = () => {}
+    let alive = true
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<string>("media-control", (event) => systemControl(event.payload)).then((unlisten) => {
+        if (alive) stop = unlisten
+        else unlisten()
+      }),
+    )
+    return () => {
+      alive = false
+      stop()
+    }
   }, [])
 
   return (

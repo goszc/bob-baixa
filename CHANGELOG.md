@@ -12,6 +12,7 @@
 - faixas iguais (mesmo arquivo, mesmo id do youtube ou mesma música) não aparecem duas vezes
 - letras: arquivo, .lrc ao lado, lrcmux, karalyr, lrclib e lyrics.ovh. o nome usado na busca tira o ruído de título do youtube
 - crossfade de 2 ou 3 segundos, nivelamento leve, atalhos e teclas de mídia, timer de sono e a retrospectiva local (semana, mês, ano e 12 meses): minutos, sequência e tops. nada disso sai do computador
+- no windows, a miniatura da barra de tarefas tem anterior, reproduzir ou pausar, e próxima. título, artista e capa acompanham a faixa, e as teclas de mídia do sistema usam esses controles
 
 ## 0.3.0
 

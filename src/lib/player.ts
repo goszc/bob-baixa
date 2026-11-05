@@ -138,6 +138,7 @@ let lastListenAt = 0
 let lastTip = ""
 let restored = false
 let sessionStamp = 0
+let controlAt = 0
 
 function emit() {
   listeners.forEach((listener) => listener())
@@ -304,10 +305,41 @@ function publishSession() {
       /* the webview may not expose media session */
     }
   }
-  const tip = `${title}\n${artist}`
-  if (tip === lastTip || !isTauri()) return
-  lastTip = tip
-  void invoke("set_now_playing", { title, artist }).catch(() => undefined)
+  const artwork = track?.thumbnail && /^https?:\/\//i.test(track.thumbnail) ? track.thumbnail : ""
+  const album = player.meta?.album || track?.album || ""
+  const signature = `${title}\n${artist}\n${album}\n${player.playing ? 1 : 0}\n${artwork}`
+  if (signature === lastTip || !isTauri()) return
+  lastTip = signature
+  void invoke("set_now_playing", {
+    title: title || "bob baixa",
+    artist,
+    album,
+    playing: player.playing,
+    artwork,
+  }).catch(() => undefined)
+}
+
+export function systemControl(action: string) {
+  const now = Date.now()
+  if (now - controlAt < 300) return
+  controlAt = now
+  if (action === "next") {
+    playNext()
+    return
+  }
+  if (action === "previous") {
+    playPrevious()
+    return
+  }
+  if (action === "play") {
+    if (!player.playing) togglePlayback()
+    return
+  }
+  if (action === "pause") {
+    if (player.playing) togglePlayback()
+    return
+  }
+  togglePlayback()
 }
 
 function stop(element: HTMLMediaElement | null) {

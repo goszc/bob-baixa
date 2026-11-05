@@ -2254,6 +2254,7 @@ mod tests {
         assert!(notes.contains("## 0.4.0"), "{notes}");
         assert!(notes.contains("lrcmux"));
         assert!(notes.contains("modo econômico") || notes.contains("econom"));
+        assert!(notes.contains("barra de tarefas"));
         assert!(!notes.contains("## 0.3.0"));
     }
 }

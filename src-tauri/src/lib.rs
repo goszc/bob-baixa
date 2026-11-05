@@ -1,4 +1,5 @@
 mod hidden;
+mod media_session;
 mod playback;
 mod runtime;
 mod shell_menu;
@@ -151,17 +152,60 @@ async fn cache_thumb(app: tauri::AppHandle, url: String) -> Result<String, Strin
 }
 
 #[tauri::command]
-fn set_now_playing(app: tauri::AppHandle, title: String, artist: String) {
+async fn set_now_playing(
+    app: tauri::AppHandle,
+    title: String,
+    artist: String,
+    album: Option<String>,
+    playing: Option<bool>,
+    artwork: Option<String>,
+) {
     let tooltip = if title.trim().is_empty() {
         "bob baixa".to_string()
     } else if artist.trim().is_empty() {
-        title
+        title.clone()
     } else {
         format!("{title} — {artist}")
     };
     if let Some(tray) = app.tray_by_id("bob") {
         let _ = tray.set_tooltip(Some(tooltip));
     }
+    let artwork = artwork_file(&app, artwork.unwrap_or_default()).await;
+    let playing = playing.unwrap_or(false);
+    let album = album.unwrap_or_default();
+    let art = media_session::encode_artwork(artwork.as_deref());
+    let _ = app.run_on_main_thread(move || {
+        media_session::apply(
+            media_session::NowPlaying {
+                title,
+                artist,
+                album,
+                playing,
+            },
+            art,
+        );
+    });
+}
+
+async fn artwork_file(app: &tauri::AppHandle, artwork: String) -> Option<String> {
+    let artwork = artwork.trim();
+    if artwork.is_empty() {
+        return None;
+    }
+    if artwork.starts_with("https://") || artwork.starts_with("http://") {
+        #[cfg(windows)]
+        {
+            return runtime::cache_thumb(app, artwork).await.ok();
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = app;
+            return None;
+        }
+    }
+    std::path::Path::new(artwork)
+        .is_file()
+        .then(|| artwork.to_string())
 }
 
 #[tauri::command]
@@ -210,6 +254,7 @@ pub fn run() {
         })
         .setup(|app| {
             runtime::boot(app.handle().clone());
+            media_session::install(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
