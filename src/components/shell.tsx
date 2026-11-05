@@ -5,9 +5,12 @@ import { cn } from "../lib/cn"
 import { applyUpdate, closeConfirm, dismissNotes, go, useApp, useT } from "../store"
 import { ConfirmDialog, NotesDialog } from "./ui/dialog"
 import { Logo } from "./logo"
+import { NowPlaying } from "./now-playing"
+import { PlayerEngine } from "./player-engine"
 
 const NAV: { id: Page; key: Key }[] = [
   { id: "home", key: "nav_download" },
+  { id: "player", key: "nav_player" },
   { id: "queue", key: "nav_queue" },
   { id: "search", key: "nav_search" },
   { id: "convert", key: "nav_convert" },
@@ -76,7 +79,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <ToolLine name="ffmpeg" phase={app.tools.ffmpeg} />
         </div>
       </aside>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <nav className="flex gap-1 overflow-x-auto border-b border-line px-4 py-3 md:hidden">
           {NAV.map((item) => (
             <button
@@ -92,21 +95,29 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
           ))}
         </nav>
-        <main className="flex-1 overflow-auto">
-          <div key={app.page} className="animate-rise max-w-[760px] px-8 py-10 md:px-12">
-            {children}
-          </div>
+        <main className={cn("min-h-0 flex-1", app.page === "player" ? "overflow-hidden" : "overflow-auto")}>
+          {app.page === "player" ? (
+            <div key="player" className="animate-rise h-full">
+              {children}
+            </div>
+          ) : (
+            <div key={app.page} className="animate-rise max-w-[760px] px-8 py-10 md:px-12">
+              {children}
+            </div>
+          )}
         </main>
+        {app.page === "player" ? null : <NowPlaying />}
       </div>
+      <PlayerEngine />
       {app.updateOffer ? (
-        <div className="fixed bottom-6 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill">
+        <div className={cn("fixed left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill", app.page === "player" ? "bottom-6" : "bottom-24")}>
           <span>{t("update_ready")}</span>
           <button type="button" className="underline" onClick={() => void applyUpdate()}>
             {t("restart")}
           </button>
         </div>
       ) : app.toast ? (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-30 -translate-x-1/2 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill">
+        <div className={cn("pointer-events-none fixed left-1/2 z-30 -translate-x-1/2 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill", app.page === "player" ? "bottom-6" : "bottom-24")}>
           {app.toast}
         </div>
       ) : null}

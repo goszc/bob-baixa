@@ -47,6 +47,7 @@ claro, escuro, vidro claro e vidro escuro. **seguir o windows** acompanha o modo
 - converter um arquivo que já está no computador
 - monitorar canais e playlists e baixar vídeos novos
 - histórico
+- player para o que já foi baixado. toca o áudio e o vídeo que estão no disco, sem transmitir o youtube. as letras vêm do arquivo, de um `.lrc` ao lado ou do [lrclib](https://lrclib.net)
 - legendas, miniatura, metadados, capítulos e sponsorblock
 - pasta de destino, modelo do nome e configuração gravada
 - cookies em **auto**: se o vídeo pedir login, tenta de novo com o navegador instalado. se o banco de cookies travar, feche o navegador
@@ -133,3 +134,7 @@ npm run tauri dev
 ```
 
 yt-dlp e ffmpeg não vão dentro do instalador. o app baixa a versão atual na primeira execução.
+
+## licença
+
+mit. o texto está em [LICENSE](LICENSE).

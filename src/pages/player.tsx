@@ -1,0 +1,303 @@
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { Segmented } from "../components/segmented"
+import { IconNext, IconPause, IconPlay, IconPrev, IconRepeat, IconShuffle, IconVolume } from "../components/player-icons"
+import { Scrubber } from "../components/scrubber"
+import { Thumb } from "../components/thumb"
+import { Input } from "../components/ui/input"
+import { formatClock } from "../lib/format"
+import type { Key } from "../lib/i18n"
+import { collectTracks, previewPlayerTracks, type Track } from "../lib/library"
+import { cn } from "../lib/cn"
+import {
+  activeLine,
+  currentTrack,
+  cycleRepeat,
+  displayArtist,
+  displayTitle,
+  orderedTracks,
+  playNext,
+  playPrevious,
+  playOrderSlot,
+  playTracks,
+  seek,
+  setPanel,
+  setVideoSlot,
+  setVolume,
+  toggleMute,
+  togglePlayback,
+  toggleShuffle,
+  usePlayer,
+} from "../lib/player"
+import { openOutput, PREVIEW, useApp, useT } from "../store"
+
+const SOURCE_KEY: Record<string, Key> = {
+  embedded: "lyrics_source_embedded",
+  file: "lyrics_source_file",
+  lrclib: "lyrics_source_lrclib",
+}
+
+function matches(track: Track, query: string) {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return true
+  return `${track.title} ${track.artist}`.toLocaleLowerCase().includes(needle)
+}
+
+function TransportButton({
+  label,
+  pressed,
+  onClick,
+  disabled,
+  children,
+  large,
+}: {
+  label: string
+  pressed?: boolean
+  onClick: () => void
+  disabled?: boolean
+  children: ReactNode
+  large?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={pressed}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center justify-center rounded-full transition-colors disabled:opacity-30",
+        large
+          ? "h-14 w-14 bg-fill text-onfill hover:opacity-90"
+          : pressed
+            ? "h-10 w-10 bg-soft text-ink"
+            : "h-10 w-10 text-muted hover:bg-soft hover:text-ink",
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+function TrackButton({ track, active, playing, onClick }: { track: Track; active: boolean; playing: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn("flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left", active ? "bg-soft" : "hover:bg-soft/80")}
+    >
+      <Thumb src={track.thumbnail} videoUrl={track.pageUrl} className="h-12 w-12 rounded-[10px]" />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          {active && playing ? (
+            <span className="eq text-ink" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          ) : null}
+          <span className="truncate text-[14px] font-medium">{track.title}</span>
+        </span>
+        <span className="mt-0.5 block truncate text-[12px] text-muted">{track.artist}</span>
+      </span>
+      <span className="text-[12px] tabular-nums text-muted">{formatClock(track.duration)}</span>
+    </button>
+  )
+}
+
+function Lyrics({ time }: { time: number }) {
+  const player = usePlayer()
+  const t = useT()
+  const listRef = useRef<HTMLDivElement>(null)
+  const lyrics = player.lyrics
+  const synced = Boolean(lyrics?.synced)
+  const current = synced && lyrics ? activeLine(lyrics.lines, time) : -1
+
+  useEffect(() => {
+    const list = listRef.current
+    const node = list?.querySelector<HTMLElement>("[data-lyric-active='true']")
+    if (!list || !node) return
+    const top = node.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop
+    list.scrollTo({ top: top - list.clientHeight / 2 + node.clientHeight / 2, behavior: "smooth" })
+  }, [current])
+
+  if (player.lyricsState === "loading") {
+    return <p className="px-3 py-10 text-[14px] text-muted">{t("lyrics_loading")}</p>
+  }
+  if (player.error) {
+    return <p className="px-3 py-10 text-[14px] text-danger">{t(player.error === "missing" ? "player_missing" : "player_failed")}</p>
+  }
+  if (!lyrics || lyrics.instrumental) {
+    return <p className="px-3 py-10 text-[14px] text-muted">{t(lyrics?.instrumental ? "lyrics_instrumental" : "lyrics_empty")}</p>
+  }
+  if (!lyrics.lines.length) {
+    return <p className="px-3 py-10 text-[14px] text-muted">{t("lyrics_empty")}</p>
+  }
+  const source = SOURCE_KEY[lyrics.source]
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {source ? <p className="px-3 pb-2 text-[12px] text-muted">{t(source)}</p> : null}
+      <div ref={listRef} className="relative min-h-0 flex-1 space-y-1 overflow-auto pb-6">
+        {lyrics.lines.map((line, index) => {
+          const on = synced && index === current
+          return (
+            <button
+              key={`${line.at}-${index}`}
+              type="button"
+              data-lyric-active={on ? "true" : "false"}
+              onClick={() => {
+                if (synced) seek(line.at)
+              }}
+              className={cn(
+                "block w-full rounded-xl px-3 py-2.5 text-left text-[16px] leading-snug transition-colors",
+                on ? "bg-soft font-medium text-ink" : "text-muted hover:text-ink",
+              )}
+            >
+              {line.text}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+export function Player() {
+  const app = useApp()
+  const player = usePlayer()
+  const t = useT()
+  const [query, setQuery] = useState("")
+  const library = useMemo(() => {
+    const downloaded = collectTracks(app.jobs, app.history, app.convertJob)
+    return PREVIEW ? [...previewPlayerTracks, ...downloaded] : downloaded
+  }, [app.jobs, app.history, app.convertJob])
+  const visible = library.filter((track) => matches(track, query))
+  const queue = orderedTracks(player)
+  const track = currentTrack(player)
+  const title = displayTitle(player)
+  const artist = displayArtist(player)
+  const showVideo = player.playbackKind === "video" && !player.error && Boolean(track)
+  const disabled = !track || player.error !== null
+  const repeatLabel =
+    player.repeat === "all" ? t("player_repeat_all") : player.repeat === "one" ? t("player_repeat_one") : t("player_repeat_off")
+
+  useEffect(() => {
+    return () => setVideoSlot(null)
+  }, [])
+
+  return (
+    <div className="flex h-full min-h-0 flex-col lg:flex-row">
+      <section className="min-h-0 flex-1 overflow-auto px-6 py-8 md:px-10">
+        <div className="mx-auto flex w-full max-w-[460px] flex-col">
+          <div className="relative aspect-square overflow-hidden rounded-[28px] bg-soft">
+            {showVideo ? (
+              <div ref={setVideoSlot} className="absolute inset-0 bg-black" />
+            ) : (
+              <Thumb src={track?.thumbnail} videoUrl={track?.pageUrl} className="absolute inset-0 h-full w-full rounded-none" />
+            )}
+          </div>
+          <p className="mt-6 text-[12px] text-muted">{t("player_now")}</p>
+          <h1 className="mt-1 truncate text-[28px] font-medium tracking-[-0.04em]">
+            {title || (library.length ? t("player_idle") : t("player_empty"))}
+          </h1>
+          <p className="mt-1 truncate text-[15px] text-muted">
+            {artist || (track ? "\u00a0" : library.length ? t("player_queue_empty") : t("player_empty_hint"))}
+          </p>
+          {player.error ? (
+            <div className="mt-4">
+              <p className="text-[13px] leading-relaxed text-danger">
+                {t(player.error === "missing" ? "player_missing" : "player_failed")}
+              </p>
+              {track ? (
+                <button type="button" className="mt-2 text-[13px] text-muted hover:text-ink" onClick={() => void openOutput(track.path)}>
+                  {t("open_folder")}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="mt-6">
+            <Scrubber value={player.currentTime} max={player.duration} label={t("player_now")} disabled={disabled} onChange={seek} />
+            <div className="mt-1 flex justify-between text-[12px] tabular-nums text-muted">
+              <span>{formatClock(player.currentTime)}</span>
+              <span>{formatClock(player.duration || track?.duration)}</span>
+            </div>
+          </div>
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <TransportButton label={t("player_shuffle")} pressed={player.shuffle} disabled={!player.queue.length} onClick={toggleShuffle}>
+              <IconShuffle className="h-[18px] w-[18px]" />
+            </TransportButton>
+            <TransportButton label={t("player_prev")} disabled={disabled} onClick={playPrevious}>
+              <IconPrev className="h-5 w-5" />
+            </TransportButton>
+            <TransportButton label={player.playing ? t("pause") : t("player_play")} disabled={disabled} onClick={togglePlayback} large>
+              {player.playing ? <IconPause className="h-5 w-5" /> : <IconPlay className="h-5 w-5" />}
+            </TransportButton>
+            <TransportButton label={t("player_next")} disabled={disabled} onClick={playNext}>
+              <IconNext className="h-5 w-5" />
+            </TransportButton>
+            <TransportButton label={repeatLabel} pressed={player.repeat !== "off"} disabled={!player.queue.length} onClick={cycleRepeat}>
+              <IconRepeat className="h-[18px] w-[18px]" one={player.repeat === "one"} />
+            </TransportButton>
+          </div>
+          <div className="mx-auto mt-5 flex w-full max-w-[240px] items-center gap-3">
+            <button type="button" aria-label={player.muted ? t("player_volume") : t("player_mute")} className="text-muted hover:text-ink" onClick={toggleMute}>
+              <IconVolume className="h-5 w-5" muted={player.muted || player.volume === 0} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <Scrubber
+                value={player.muted ? 0 : player.volume}
+                max={1}
+                label={t("player_volume")}
+                onChange={setVolume}
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+      <aside className="flex min-h-[360px] w-full min-w-0 flex-1 flex-col border-t border-line px-4 py-5 lg:min-h-0 lg:w-[400px] lg:flex-none lg:border-t-0 lg:border-l">
+        <Segmented
+          value={player.panel}
+          onChange={setPanel}
+          options={[
+            { value: "library", label: t("player_library") },
+            { value: "queue", label: t("player_queue") },
+            { value: "lyrics", label: t("player_lyrics") },
+          ]}
+        />
+        {player.panel === "lyrics" ? (
+          <div className="mt-4 flex min-h-0 flex-1 flex-col">
+            <Lyrics time={player.currentTime} />
+          </div>
+        ) : (
+          <div className="mt-4 flex min-h-0 flex-1 flex-col">
+            {player.panel === "library" ? (
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("player_filter")} className="mb-3 h-9" />
+            ) : null}
+            <div className="min-h-0 flex-1 space-y-1 overflow-auto pb-4">
+              {player.panel === "library" && visible.length === 0 ? (
+                <div className="px-2 py-10">
+                  <p className="text-[15px]">{library.length === 0 ? t("player_empty") : t("no_results")}</p>
+                  {library.length === 0 ? <p className="mt-2 text-[13px] text-muted">{t("player_empty_hint")}</p> : null}
+                </div>
+              ) : null}
+              {player.panel === "queue" && queue.length === 0 ? (
+                <p className="px-2 py-10 text-[14px] text-muted">{t("player_queue_empty")}</p>
+              ) : null}
+              {(player.panel === "library" ? visible : queue).map((item, index) => (
+                <TrackButton
+                  key={`${item.id}-${item.path}`}
+                  track={item}
+                  active={item.id === track?.id && item.path === track?.path}
+                  playing={player.playing && !player.error}
+                  onClick={() => {
+                    if (player.panel === "library") playTracks(visible, index)
+                    else playOrderSlot(index)
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </aside>
+    </div>
+  )
+}

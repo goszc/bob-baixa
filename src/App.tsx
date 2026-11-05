@@ -3,6 +3,7 @@ import { Shell } from "./components/shell"
 import { Convert } from "./pages/convert"
 import { History } from "./pages/history"
 import { Home } from "./pages/home"
+import { Player } from "./pages/player"
 import { Monitor } from "./pages/monitor"
 import { Queue } from "./pages/queue"
 import { Search } from "./pages/search"
@@ -17,6 +18,7 @@ export default function App() {
   return (
     <Shell>
       {page === "home" && <Home />}
+      {page === "player" && <Player />}
       {page === "queue" && <Queue />}
       {page === "search" && <Search />}
       {page === "convert" && <Convert />}
