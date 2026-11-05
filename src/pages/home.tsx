@@ -19,6 +19,8 @@ import {
   applyPreset,
   deletePreset,
   dismissClipboard,
+  dismissAllAnalyzed,
+  dismissAnalyzed,
   downloadNow,
   renamePreset,
   savePreset,
@@ -132,13 +134,25 @@ export function Home() {
       </div>
       <Presets />
       {app.error && app.page === "home" ? <p className="mt-3 text-[13px] text-danger">{app.error}</p> : null}
-      <div className="mt-5 space-y-3">
+      {app.analyzed.length > 0 ? (
+        <div className="mt-4 flex justify-end">
+          <button type="button" className="text-[13px] text-muted hover:text-ink" onClick={dismissAllAnalyzed}>
+            {t("close_all")}
+          </button>
+        </div>
+      ) : null}
+      <div className="mt-3 space-y-3">
         {app.analyzed.map((media) =>
           media.kind === "video" ? (
             <article key={media.id} className="flex gap-4 rounded-2xl border border-line bg-surface p-3">
               <Thumb src={media.thumbnail} videoUrl={media.url} className="h-[104px] w-[184px]" />
               <div className="min-w-0 flex-1 py-1">
-                <h2 className="truncate text-[16px] font-medium tracking-tight select-text">{media.title}</h2>
+                <div className="flex items-start gap-3">
+                  <h2 className="min-w-0 flex-1 truncate text-[16px] font-medium tracking-tight select-text">{media.title}</h2>
+                  <button type="button" className="text-[13px] text-muted hover:text-ink" aria-label={t("close")} onClick={() => dismissAnalyzed(media.id)}>
+                    {t("close")}
+                  </button>
+                </div>
                 <p className="mt-1 text-[13px] text-muted">
                   {[media.channel, media.duration ? formatClock(media.duration) : null].filter(Boolean).join(" · ")}
                 </p>
@@ -147,15 +161,20 @@ export function Home() {
           ) : (
             <article key={media.id} className="rounded-2xl border border-line bg-surface p-3">
               <div className="flex items-center justify-between gap-3 px-1">
-                <div>
-                  <h2 className="text-[16px] font-medium tracking-tight">{media.title}</h2>
+                <div className="min-w-0">
+                  <h2 className="truncate text-[16px] font-medium tracking-tight">{media.title}</h2>
                   <p className="mt-1 text-[13px] text-muted">
                     {media.entries.length} {t("videos")}
                   </p>
                 </div>
-                <button type="button" className="text-[13px] text-muted" onClick={() => toggleAllEntries(media.id, (app.entryChoice[media.id] ?? []).length !== media.entries.length)}>
-                  {t("select_all")}
-                </button>
+                <div className="flex shrink-0 items-center gap-3">
+                  <button type="button" className="text-[13px] text-muted hover:text-ink" onClick={() => toggleAllEntries(media.id, (app.entryChoice[media.id] ?? []).length !== media.entries.length)}>
+                    {t("select_all")}
+                  </button>
+                  <button type="button" className="text-[13px] text-muted hover:text-ink" aria-label={t("close")} onClick={() => dismissAnalyzed(media.id)}>
+                    {t("close")}
+                  </button>
+                </div>
               </div>
               <ul className="mt-3 max-h-64 overflow-auto">
                 {media.entries.map((entry) => {
@@ -216,7 +235,7 @@ export function Home() {
           {app.config.audioOnly ? (
             <Field label={t("bitrate")}>
               <Select value={app.config.audioBitrate} disabled={app.config.audioFormat === "flac"} onChange={(event) => setConfig({ audioBitrate: event.target.value })}>
-                {["320k", "256k", "192k", "128k", "96k"].map((rate) => (
+                {["320k", "256k", "192k", "128k", "96k", "32k", "24k"].map((rate) => (
                   <option key={rate} value={rate}>
                     {rate}
                   </option>
@@ -269,11 +288,12 @@ function Presets() {
                 on ? "border-fill bg-fill text-onfill" : "border-line text-muted hover:text-ink",
               )}
             >
-              {preset.name}
+              {preset.id === "builtin-economy" ? t("preset_economy") : preset.name}
             </button>
           )
         })}
       </div>
+      {activeId === "builtin-economy" ? <p className="mt-3 max-w-xl text-[13px] leading-relaxed text-muted">{t("economy_hint")}</p> : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Input className="w-[200px]" value={name} placeholder={t("preset_name")} onChange={(event) => setName(event.target.value)} />
         <Button variant="outline" onClick={() => savePreset(name)}>

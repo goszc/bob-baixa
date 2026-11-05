@@ -205,6 +205,8 @@ export interface EnqueueItem {
   audioOnly?: boolean
   container?: string
   audioFormat?: string
+  audioBitrate?: string
+  playlistTitle?: string
 }
 
 export const defaultConfig: Config = {

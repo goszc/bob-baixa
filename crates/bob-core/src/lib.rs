@@ -1,9 +1,11 @@
+mod library;
 mod lyrics;
 mod media;
 mod model;
 mod notes;
 mod parse;
 
+pub use library::*;
 pub use lyrics::*;
 pub use media::*;
 pub use model::*;
