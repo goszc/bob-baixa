@@ -1,4 +1,5 @@
 mod hidden;
+mod playback;
 mod runtime;
 mod shell_menu;
 mod updates;
@@ -218,7 +219,9 @@ pub fn run() {
             cache_thumb,
             set_window_material,
             read_text_file,
-            ack_whats_new
+            ack_whats_new,
+            playback::inspect_media,
+            playback::load_lyrics
         ])
         .run(tauri::generate_context!())
         .expect("bob baixa");

@@ -2,6 +2,7 @@ export type Lang = "pt" | "en"
 export type ThemeMode = "system" | "light" | "dark" | "glass-light" | "glass-dark"
 export type Page =
   | "home"
+  | "player"
   | "queue"
   | "search"
   | "convert"

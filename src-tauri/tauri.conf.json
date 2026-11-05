@@ -33,7 +33,8 @@
         "img-src": "'self' asset: http://asset.localhost https://asset.localhost blob: data: https://i.ytimg.com https://*.ytimg.com https://*.ggpht.com https://*.googleusercontent.com",
         "style-src": "'self' 'unsafe-inline'",
         "font-src": "'self' data:",
-        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* https:"
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* https:",
+        "media-src": "'self' asset: http://asset.localhost https://asset.localhost blob: data:"
       },
       "assetProtocol": {
         "enable": true,

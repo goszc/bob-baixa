@@ -14,7 +14,7 @@ export function youtubeThumb(value?: string, quality: "hqdefault" | "mqdefault" 
 export function thumbSources(src?: string, videoUrl?: string): string[] {
   const sources: string[] = []
   const add = (url?: string) => {
-    if (url && url.startsWith("https://") && !sources.includes(url)) sources.push(url)
+    if (url && (url.startsWith("https://") || (url.startsWith("/") && !url.startsWith("//"))) && !sources.includes(url)) sources.push(url)
   }
   add(src)
   add(youtubeThumb(videoUrl))
