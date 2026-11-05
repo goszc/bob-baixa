@@ -16,6 +16,7 @@ export interface DiskFile {
 }
 
 let disk: DiskFile[] | null = null
+let settled = false
 let removed = new Set<string>()
 const listeners = new Set<() => void>()
 let request = 0
@@ -45,20 +46,38 @@ export function unmarkRemoved(path: string) {
   emit()
 }
 
-export async function refreshCatalog() {
+export function useCatalogSettled() {
+  return useSyncExternalStore(
+    (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    () => settled || !isTauri(),
+    () => true,
+  )
+}
+
+export async function refreshCatalog(dir?: string, liveDir?: () => string) {
   if (!isTauri()) {
     disk = null
+    settled = true
     emit()
     return
   }
+  const outputDir = (dir ?? liveDir?.() ?? "").trim()
+  if (!outputDir) return
   const mine = ++request
   try {
-    const files = await invoke<DiskFile[]>("scan_library")
+    const files = await invoke<DiskFile[]>("scan_library", { path: outputDir })
     if (mine !== request) return
+    if (liveDir && trackKey(liveDir()) !== trackKey(outputDir)) return
     disk = files
+    settled = true
     emit()
   } catch {
     if (mine !== request) return
+    settled = true
+    emit()
   }
 }
 

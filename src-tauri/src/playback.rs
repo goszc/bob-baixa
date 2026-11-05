@@ -261,15 +261,21 @@ enum Fetch {
 }
 
 #[tauri::command]
-pub async fn scan_library(app: tauri::AppHandle) -> Result<Vec<bob_core::ScannedMedia>, String> {
-    let root = {
+pub async fn scan_library(app: tauri::AppHandle, path: Option<String>) -> Result<Vec<bob_core::ScannedMedia>, String> {
+    let configured = {
         let inner = app.state::<AppState>().inner.clone().lock_owned().await;
         inner.config.output_dir.clone()
+    };
+    let chosen = path.unwrap_or_default();
+    let root = if chosen.trim().is_empty() {
+        configured
+    } else {
+        chosen
     };
     if root.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let path = PathBuf::from(root);
+    let path = PathBuf::from(root.trim());
     tokio::task::spawn_blocking(move || bob_core::scan_media_dir(&path))
         .await
         .map_err(|error| error.to_string())

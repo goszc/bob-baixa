@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { collectTracks, dedupeTracks, isInsideLibrary, relatedTracks, type Track } from "./library.ts"
+import { collectTracks, dedupeTracks, isInsideLibrary, relatedTracks, trackKey, type Track } from "./library.ts"
 import type { ConvertJob, HistoryEntry, Job } from "./types.ts"
 
 const folder = "C:\\Downloads\\bob baixa"
@@ -26,6 +26,18 @@ test("a file is inside the settings folder only when it lives under that path", 
   assert.equal(isInsideLibrary("D:\\Musica\\faixa.mp3", folder), false)
   assert.equal(isInsideLibrary(`${folder}\\faixa.mp3`, ""), false)
   assert.equal(isInsideLibrary(folder, folder), false)
+})
+
+test("windows verbatim paths still belong to the configured folder", () => {
+  const root = "C:\\Users\\Gustavo\\Downloads\\bob baixa"
+  const mp4 = "\\\\?\\C:\\Users\\Gustavo\\Downloads\\bob baixa\\Don't Be so Serious [D56XxiS_pJ0].mp4"
+  const mp3 = `${root}\\playlist\\Low Roar - Easy Way Out.mp3`
+  assert.equal(isInsideLibrary(mp4, root), true)
+  assert.equal(isInsideLibrary(mp3, `\\\\?\\${root}`), true)
+  assert.equal(isInsideLibrary("\\\\?\\C:\\Users\\Gustavo\\Downloads\\bob baixa extra\\a.mp4", root), false)
+  assert.equal(isInsideLibrary("//?/C:/Users/Gustavo/Downloads/bob baixa/clipe.mp4", root), true)
+  assert.equal(trackKey(mp4), trackKey(`${root}\\Don't Be so Serious [D56XxiS_pJ0].mp4`))
+  assert.equal(trackKey("\\\\?\\UNC\\server\\share\\bob\\faixa.mp3"), trackKey("\\\\server\\share\\bob\\faixa.mp3"))
 })
 
 test("the library keeps playable files from the configured folder and drops the rest", () => {

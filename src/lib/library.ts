@@ -34,8 +34,25 @@ export function splitArtistTitle(raw: string): { artist: string; title: string }
   return { artist: "", title: text }
 }
 
+/** `\\?\C:\...` and `\\?\UNC\...` are the same folder as the path without that prefix. */
+function stripVerbatim(value: string) {
+  const text = value.trim()
+  const lower = text.toLowerCase()
+  if (lower.startsWith("\\\\?\\unc\\")) return `\\\\${text.slice(8)}`
+  if (lower.startsWith("//?/unc/")) return `//${text.slice(8)}`
+  if (lower.startsWith("\\\\?\\")) return text.slice(4)
+  if (lower.startsWith("//?/")) return text.slice(4)
+  return text
+}
+
+function canonical(value: string) {
+  const stripped = stripVerbatim(value)
+  if (!stripped) return ""
+  return stripped.replaceAll("\\", "/").replace(/\/+/g, "/").replace(/\/+$/, "").toLowerCase()
+}
+
 export function trackKey(path: string) {
-  return path.replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase()
+  return canonical(path)
 }
 
 function norm(path: string) {
@@ -48,12 +65,6 @@ export function isInsideLibrary(path: string, outputDir: string): boolean {
   const file = canonical(path)
   if (!root || !file || file === root) return false
   return file.startsWith(`${root}/`)
-}
-
-function canonical(value: string) {
-  const trimmed = value.trim()
-  if (!trimmed) return ""
-  return trimmed.replaceAll("\\", "/").replace(/\/+/g, "/").replace(/\/+$/, "").toLowerCase()
 }
 
 function stemTitle(path: string) {
