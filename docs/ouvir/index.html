@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#161616" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="bob baixa" />
     <title>bob baixa</title>
@@ -24,11 +25,11 @@
       main {
         max-width: 480px;
         margin: 0 auto;
-        padding: calc(28px + env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom));
+        padding: calc(24px + env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom));
       }
       h1 { font-size: 28px; font-weight: 560; letter-spacing: -0.04em; margin: 0; }
-      p.sub { color: #9a9a94; margin: 8px 0 24px; }
-      button { font: inherit; }
+      p.sub { color: #9a9a94; margin: 8px 0 16px; }
+      button, input { font: inherit; }
       .go, .ghost {
         width: 100%;
         min-height: 48px;
@@ -38,40 +39,75 @@
         color: #161616;
       }
       .ghost { margin-top: 12px; background: transparent; color: #f4f4f1; border: 1px solid #3a3a3a; }
-      .art { width: 100%; aspect-ratio: 1; border-radius: 28px; background: #242424 center/cover; margin: 8px 0 16px; }
+      .stage {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 28px;
+        background: #242424;
+        overflow: hidden;
+        margin: 8px 0 16px;
+      }
+      .stage img, .stage video { width: 100%; height: 100%; object-fit: cover; display: block; background: #242424; }
+      .stage video { object-fit: contain; background: #000; }
       .title { font-size: 22px; letter-spacing: -0.03em; }
       .artist { color: #9a9a94; margin-top: 4px; min-height: 1.2em; }
-      audio { width: 100%; margin: 18px 0 8px; }
-      .row { display: flex; gap: 12px; }
+      .time { display: flex; justify-content: space-between; color: #9a9a94; font-variant-numeric: tabular-nums; font-size: 13px; margin-top: 8px; }
+      input[type="range"] { width: 100%; margin: 8px 0; accent-color: #f4f4f1; }
+      input[type="search"] {
+        width: 100%;
+        min-height: 44px;
+        border-radius: 999px;
+        border: 1px solid #3a3a3a;
+        background: #1d1d1d;
+        color: inherit;
+        padding: 0 16px;
+        margin: 8px 0 4px;
+      }
+      .row { display: flex; gap: 8px; }
       .row button { flex: 1; min-height: 48px; border: 0; border-radius: 999px; background: #242424; color: inherit; }
-      ul { list-style: none; padding: 0; margin: 18px 0 0; }
+      .row button.main { background: #f4f4f1; color: #161616; }
+      ul { list-style: none; padding: 0; margin: 12px 0 0; }
       li { border-top: 1px solid #2c2c2c; }
       li button { width: 100%; min-height: 48px; background: none; border: 0; color: inherit; text-align: left; padding: 12px 0; }
-      .lyric { white-space: pre-wrap; color: #c8c8c2; margin-top: 18px; }
-      .err { color: #ffb4a8; min-height: 1.2em; }
+      li button[aria-current="true"] { color: #fff; font-weight: 600; }
+      .lyric { margin-top: 16px; max-height: 240px; overflow: auto; }
+      .lyric button { display: block; width: 100%; text-align: left; background: none; border: 0; color: #9a9a94; padding: 8px 0; }
+      .lyric button[aria-current="true"] { color: #f4f4f1; font-size: 18px; }
+      .err { color: #ffb4a8; min-height: 1.2em; margin: 8px 0; }
+      .status { color: #9a9a94; min-height: 1.2em; margin: 0 0 8px; }
+      audio { position: absolute; width: 1px; height: 1px; opacity: 0; }
     </style>
   </head>
   <body>
     <main>
       <h1>bob baixa</h1>
       <p class="sub" id="sub">a mesma biblioteca do drive, no celular.</p>
+      <p class="err" id="err" role="status"></p>
       <section id="gate">
         <button class="go" id="signin" type="button">entrar com google</button>
         <button class="ghost" id="install" type="button" hidden>instalar</button>
-        <p class="err" id="err"></p>
       </section>
       <section id="player" hidden>
-        <div class="art" id="art"></div>
+        <p class="status" id="status"></p>
+        <div class="stage">
+          <img id="cover" alt="" />
+          <video id="video" playsinline hidden></video>
+        </div>
         <div class="title" id="title">—</div>
         <div class="artist" id="artist"></div>
-        <audio id="audio" controls playsinline></audio>
+        <input id="seek" type="range" min="0" max="1000" value="0" aria-label="posição" />
+        <div class="time" id="time">0:00 / 0:00</div>
         <div class="row">
           <button id="prev" type="button">anterior</button>
+          <button id="toggle" class="main" type="button">tocar</button>
           <button id="next" type="button">próxima</button>
         </div>
+        <input id="search" type="search" placeholder="buscar" aria-label="buscar" />
         <div class="lyric" id="lyric"></div>
         <ul id="list"></ul>
       </section>
+      <audio id="audio" preload="none"></audio>
     </main>
     <script src="https://accounts.google.com/gsi/client" async></script>
     <script src="./config.js"></script>

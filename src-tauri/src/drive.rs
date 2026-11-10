@@ -262,6 +262,7 @@ pub fn boot(app: tauri::AppHandle) {
             }
         }
     });
+    schedule_phone_publish();
 }
 
 fn persist_queue() {
@@ -1682,7 +1683,100 @@ fn list_tracks(token: &Token) -> Result<Vec<DriveTrack>, String> {
             }
         }
     }
+    schedule_phone_publish();
     Ok(out)
+}
+
+fn schedule_phone_publish() {
+    static BUSY: AtomicBool = AtomicBool::new(false);
+    if BUSY.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("drive-phone".into()).spawn(|| {
+        std::thread::sleep(Duration::from_secs(2));
+        if let Err(error) = publish_phone_index() {
+            log_drive(&format!("índice do celular: {error}"));
+        }
+        BUSY.store(false, Ordering::Relaxed);
+    });
+}
+
+fn publish_phone_index() -> Result<(), String> {
+    if load_token().is_none() {
+        return Ok(());
+    }
+    let token = bearer(false)?.token;
+    let root = folder(&token, "root", "bob baixa")?;
+    let dot = exact_folder(&token, &root, ".bob")?;
+    let covers = exact_folder(&token, &dot, "covers")?;
+    for (id, path, mime) in drive_play::records_missing_covers() {
+        let ext = if mime.contains("png") { "png" } else { "jpg" };
+        let name = format!("{id}.{ext}");
+        if find_named(&token, &covers, &name)?.is_some() {
+            continue;
+        }
+        match resumable(&token, &path, &name, &mime, &covers, &[("bobKind", "cover"), ("bobMedia", &id)]) {
+            Ok(cover_id) => drive_play::remember_cover_id(&id, &cover_id),
+            Err(error) => log_drive(&format!("capa do celular {id}: {error}")),
+        }
+    }
+    let body = drive_play::phone_index_body();
+    let dir = root_dir().lock().map_err(|_| "pasta".to_string())?.clone();
+    if dir.as_os_str().is_empty() {
+        return Err("sem pasta local".into());
+    }
+    let path = dir.join("phone-index.json");
+    std::fs::write(&path, &body).map_err(|error| error.to_string())?;
+    if let Some(id) = find_named(&token, &dot, "index.json")? {
+        let response = http()
+            .patch(format!("https://www.googleapis.com/upload/drive/v3/files/{id}?uploadType=media"))
+            .header("authorization", auth(&token))
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .map_err(|error| error.to_string())?;
+        if !response.status().is_success() {
+            return Err("não atualizei o índice do celular".into());
+        }
+        return Ok(());
+    }
+    let _ = resumable(&token, &path, "index.json", "application/json", &dot, &[("bobKind", "index")])?;
+    Ok(())
+}
+
+fn exact_folder(token: &str, parent: &str, name: &str) -> Result<String, String> {
+    let query = format!(
+        "name = '{}' and mimeType = 'application/vnd.google-apps.folder' and '{}' in parents and trashed = false",
+        name.replace('\'', "\\'"),
+        parent
+    );
+    let url = format!("https://www.googleapis.com/drive/v3/files?fields=files(id)&q={}", urlencoding(&query));
+    let response = http().get(url).header("authorization", auth(token)).send().map_err(|error| error.to_string())?;
+    let body = response.text().map_err(|error| error.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    if let Some(id) = value.pointer("/files/0/id").and_then(|item| item.as_str()).filter(|id| !id.is_empty()) {
+        return Ok(id.to_string());
+    }
+    let folder_body = serde_json::to_vec(&serde_json::json!({
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent],
+    }))
+    .map_err(|error| error.to_string())?;
+    let created = http()
+        .post("https://www.googleapis.com/drive/v3/files")
+        .header("authorization", auth(token))
+        .header("content-type", "application/json; charset=utf-8")
+        .body(folder_body)
+        .send()
+        .map_err(|error| error.to_string())?;
+    let status = created.status().as_u16();
+    let body = created.text().map_err(|error| error.to_string())?;
+    if !(200..300).contains(&status) {
+        return Err(api_error(status, &body));
+    }
+    let value: serde_json::Value = serde_json::from_str(&body).map_err(|error| error.to_string())?;
+    value.get("id").and_then(|item| item.as_str()).map(str::to_string).ok_or_else(|| "não criei a pasta no drive".into())
 }
 
 pub use drive_play::{cors, cover_file, describe, lyrics_text, open_media, ListedTrack};

@@ -1,5 +1,13 @@
 # changelog
 
+## 0.6.3
+
+- no celular, a faixa toca por uma URL da própria página. o service worker põe o `Authorization` e repassa o `Range`, então o áudio e o vídeo começam sem baixar o arquivo inteiro. sem o service worker, a página baixa a faixa e avisa
+- a sessão renova em silêncio e só pede o google de novo quando precisa. erro de rede, formato e drive aparece na tela
+- vídeo (mp4, webm, mkv) entra no lugar da capa. opus e webm no iphone usam um m4a da mesma música, ou explicam que o formato não toca
+- o programa grava `bob baixa/.bob/index.json` e as capas em `.bob/covers`, para o celular mostrar capa, artista, título e letra sincronizada
+- a página tem busca, fila, anterior e próxima, estado de carregamento e controles na tela bloqueada
+
 ## 0.6.2
 
 - a letra segue o elemento que está soando no crossfade. um desvio de mais de 3 segundos rejeita a letra sincronizada de outra gravação. a transcrição da ia só marca tempo quando o modelo devolveu tempo. dá para adiantar ou atrasar 0,5 s, e o ajuste fica na biblioteca local

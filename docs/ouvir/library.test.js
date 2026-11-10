@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { DRIVE_SCOPE, libraryFromFiles, libraryQuery } from "./library.js"
+import { DRIVE_SCOPE, activeLyric, choosePlayback, libraryFromFiles, libraryQuery, lyricLines, mergeLibrary } from "./library.js"
 
 test("the phone asks only for files this project created", () => {
   assert.equal(DRIVE_SCOPE, "https://www.googleapis.com/auth/drive.file")
@@ -26,4 +26,42 @@ test("a desktop upload in the same project is playable, with its lyric and cover
   assert.equal(tracks[0].artist, "Amália")
   assert.equal(tracks[0].lyricsId, "lyric-1")
   assert.equal(tracks[0].coverId, "cover-1")
+})
+
+test("the phone index fills title, cover and synced lyrics the file list does not have", () => {
+  const files = [
+    { id: "audio-1", name: 'Low Roar - "I\'ll Keep Coming".opus', mimeType: "audio/ogg", size: "4000", appProperties: { bobKind: "audio" } },
+    { id: "index-1", name: "index.json", appProperties: { bobKind: "index" } },
+  ]
+  const merged = mergeLibrary(files, {
+    version: 1,
+    tracks: [
+      {
+        id: "audio-1",
+        title: "I'll Keep Coming",
+        artist: "Low Roar",
+        coverId: "cover-9",
+        lyrics: "[00:12.00]I'll keep coming",
+      },
+    ],
+  })
+  assert.equal(merged[0].title, "I'll Keep Coming")
+  assert.equal(merged[0].artist, "Low Roar")
+  assert.equal(merged[0].coverId, "cover-9")
+  const lines = lyricLines(merged[0].lyrics)
+  assert.equal(lines[0].text, "I'll keep coming")
+  assert.equal(activeLyric(lines, 12), 0)
+})
+
+test("ios uses an m4a of the same song and otherwise explains opus", () => {
+  const opus = { id: "a", name: "song.opus", title: "Saudade", artist: "Ana", video: false }
+  const m4a = { id: "b", name: "song.m4a", title: "Saudade", artist: "Ana", video: false }
+  const swapped = choosePlayback(opus, [opus, m4a], { ios: true, opus: false })
+  assert.equal(swapped.id, "b")
+  assert.equal(swapped.unsupported, false)
+  const blocked = choosePlayback(opus, [opus], { ios: true, opus: false })
+  assert.equal(blocked.unsupported, true)
+  assert.match(blocked.reason, /opus/)
+  const video = choosePlayback({ id: "v", name: "clip.mp4", title: "Clipe", artist: "", video: true }, [], { ios: true, opus: false })
+  assert.equal(video.element, "video")
 })
