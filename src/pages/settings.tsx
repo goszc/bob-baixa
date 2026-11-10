@@ -354,6 +354,28 @@ function DriveSection() {
         <Button variant="ghost" onClick={() => void invoke("drive_open", { target: "log" })}>
           {t("settings_drive_log")}
         </Button>
+        <Button
+          variant="outline"
+          disabled={!status?.connected || busy}
+          onClick={() => {
+            setBusy(true)
+            setNote(t("settings_drive_repairing"))
+            void invoke<{ tracks: number; lyrics: number; covers: number }>("drive_repair")
+              .then((report) => {
+                setNote(
+                  t("settings_drive_repaired")
+                    .replace("{tracks}", String(report.tracks))
+                    .replace("{lyrics}", String(report.lyrics))
+                    .replace("{covers}", String(report.covers)),
+                )
+                refresh()
+              })
+              .catch((error: unknown) => setNote(error instanceof Error ? error.message : String(error)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          {t("settings_drive_repair")}
+        </Button>
       </div>
       <ul className="pb-2">
         {items.map((item) => (

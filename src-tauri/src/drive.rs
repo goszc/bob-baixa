@@ -92,6 +92,10 @@ pub struct DriveTrack {
     pub duration: Option<f64>,
     pub kind: String,
     pub size: u64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub cover: String,
 }
 
 fn root_dir() -> &'static Mutex<PathBuf> {
@@ -130,6 +134,25 @@ fn http() -> reqwest::blocking::Client {
         .build()
         .unwrap_or_else(|_| reqwest::blocking::Client::new())
 }
+
+fn http_stream() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .user_agent(concat!("bob-baixa/", env!("CARGO_PKG_VERSION")))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.status() == reqwest::StatusCode::PERMANENT_REDIRECT {
+                attempt.stop()
+            } else if attempt.previous().len() >= 5 {
+                attempt.error("muitos redirecionamentos")
+            } else {
+                attempt.follow()
+            }
+        }))
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new())
+}
+
+mod drive_play;
 
 pub fn boot(app: tauri::AppHandle) {
     if !enabled() {
@@ -808,13 +831,45 @@ fn upload_with(item: &Upload, file: &Path, token: &str) -> Result<String, String
         ("bobArtist", &truncate_property(&item.artist)),
         ("bobAlbum", &truncate_property(&item.album)),
     ])?;
-    if let Some(lrc) = sibling_lrc_paths(file).into_iter().find(|path| path.is_file()) {
-        let lrc_name = lrc.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "letra.lrc".into());
-        if let Err(error) = resumable(token, &lrc, &lrc_name, "text/plain", &parent, &[("bobKind", "lyrics")]) {
-            log_drive(&format!("letra não enviada: {error}"));
+    let lyrics_id = match sibling_lrc_paths(file).into_iter().find(|path| path.is_file()) {
+        Some(lrc) => {
+            let lrc_name = lrc.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "letra.lrc".into());
+            match resumable(token, &lrc, &lrc_name, "text/plain", &parent, &[("bobKind", "lyrics"), ("bobMedia", &id)]) {
+                Ok(lyrics_id) => lyrics_id,
+                Err(error) => {
+                    log_drive(&format!("letra não enviada: {error}"));
+                    String::new()
+                }
+            }
+        }
+        None => String::new(),
+    };
+    let cover_id = upload_cover(token, file, &parent, &id, &name);
+    drive_play::snapshot_local(file, &id, &parent, &name, &item.title, &item.artist, &item.album, item.video, &lyrics_id, &cover_id);
+    Ok(id)
+}
+
+fn upload_cover(token: &str, file: &Path, parent: &str, id: &str, name: &str) -> String {
+    let Some(bytes) = drive_play::local_cover_bytes(file) else {
+        return String::new();
+    };
+    let mime = bob_core::image_type(&bytes);
+    let ext = if mime == "image/png" { "png" } else { "jpg" };
+    let stem = bob_core::file_stem(name);
+    let cover_name = format!("{stem}.cover.{ext}");
+    let path = drive_play::cover_dir().join(format!("upload-{id}.{ext}"));
+    if std::fs::write(&path, &bytes).is_err() {
+        return String::new();
+    }
+    let uploaded = resumable(token, &path, &cover_name, mime, parent, &[("bobKind", "cover"), ("bobMedia", id)]);
+    let _ = std::fs::remove_file(&path);
+    match uploaded {
+        Ok(cover_id) => cover_id,
+        Err(error) => {
+            log_drive(&format!("capa não enviada: {error}"));
+            String::new()
         }
     }
-    Ok(id)
 }
 
 fn music_folder(token: &str, artist: &str, album: &str, video: bool) -> Result<String, String> {
@@ -1344,7 +1399,7 @@ fn list_tracks(token: &Token) -> Result<Vec<DriveTrack>, String> {
     let mut page = String::new();
     let mut out = Vec::new();
     loop {
-        let mut url = "https://www.googleapis.com/drive/v3/files?pageSize=200&fields=nextPageToken,files(id,name,mimeType,size,appProperties)&q=trashed=false".to_string();
+        let mut url = "https://www.googleapis.com/drive/v3/files?pageSize=200&fields=nextPageToken,files(id,name,mimeType,size,parents,appProperties)&q=trashed=false".to_string();
         if !page.is_empty() {
             url.push_str("&pageToken=");
             url.push_str(&urlencoding(&page));
@@ -1360,23 +1415,43 @@ fn list_tracks(token: &Token) -> Result<Vec<DriveTrack>, String> {
             break;
         };
         for file in files {
-            let kind = file.pointer("/appProperties/bobKind").and_then(|item| item.as_str()).unwrap_or("");
-            if kind != "audio" && kind != "video" {
+            let stored = file.pointer("/appProperties/bobKind").and_then(|item| item.as_str()).unwrap_or("");
+            let name = file.get("name").and_then(|item| item.as_str()).unwrap_or("").to_string();
+            let mime = file.get("mimeType").and_then(|item| item.as_str()).unwrap_or("");
+            let kind = bob_core::playback_kind(&name, mime, stored);
+            if stored != "audio" && stored != "video" && kind == "audio" && bob_core::media_kind(std::path::Path::new(&name)) == "unknown" {
+                continue;
+            }
+            if stored == "lyrics" || stored == "cover" {
                 continue;
             }
             let id = file.get("id").and_then(|item| item.as_str()).unwrap_or("");
             if id.is_empty() {
                 continue;
             }
+            let parent = file.get("parents").and_then(|item| item.as_array()).and_then(|items| items.first()).and_then(|item| item.as_str()).unwrap_or("");
+            let record = drive_play::note_remote(
+                id,
+                &name,
+                mime,
+                kind,
+                file.pointer("/appProperties/bobTitle").and_then(|item| item.as_str()).unwrap_or(""),
+                file.pointer("/appProperties/bobArtist").and_then(|item| item.as_str()).unwrap_or(""),
+                file.pointer("/appProperties/bobAlbum").and_then(|item| item.as_str()).unwrap_or(""),
+                file.get("size").and_then(|item| item.as_str()).and_then(|value| value.parse().ok()).unwrap_or(0),
+                parent,
+            );
             out.push(DriveTrack {
                 path: format!("drive:{id}"),
                 id: id.to_string(),
-                title: file.pointer("/appProperties/bobTitle").and_then(|item| item.as_str()).unwrap_or("").to_string(),
-                artist: file.pointer("/appProperties/bobArtist").and_then(|item| item.as_str()).unwrap_or("").to_string(),
-                album: file.pointer("/appProperties/bobAlbum").and_then(|item| item.as_str()).unwrap_or("").to_string(),
-                duration: None,
-                kind: kind.to_string(),
-                size: file.get("size").and_then(|item| item.as_str()).and_then(|value| value.parse().ok()).unwrap_or(0),
+                title: record.title,
+                artist: record.artist,
+                album: record.album,
+                duration: record.duration,
+                kind: record.kind,
+                size: record.size,
+                name: record.name,
+                cover: record.cover,
             });
         }
         match value.get("nextPageToken").and_then(|item| item.as_str()) {
@@ -1394,39 +1469,30 @@ fn list_tracks(token: &Token) -> Result<Vec<DriveTrack>, String> {
     Ok(out)
 }
 
-pub fn proxy(id: &str, range: Option<&str>) -> (u16, Vec<(String, String)>, Vec<u8>) {
-    let id = id.split(['?', '#']).next().unwrap_or(id).trim();
-    if id.is_empty() || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_') {
-        return (400, Vec::new(), b"id".to_vec());
+pub use drive_play::{cors, cover_file, describe, lyrics_text, open_media, ListedTrack};
+
+pub fn describe_drive(id: &str) -> ListedTrack {
+    describe(id)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairReport {
+    pub tracks: u32,
+    pub lyrics: u32,
+    pub covers: u32,
+}
+
+#[tauri::command]
+pub async fn drive_repair(app: tauri::AppHandle) -> Result<RepairReport, String> {
+    if !enabled() {
+        return Err("esta compilação não inclui o google drive.".into());
     }
-    let Ok(token) = bearer(false) else {
-        return (401, Vec::new(), b"drive".to_vec());
-    };
-    let token = token.token;
-    let url = format!("https://www.googleapis.com/drive/v3/files/{id}?alt=media");
-    let mut request = http().get(url).header("authorization", format!("Bearer {token}"));
-    if let Some(range) = range {
-        request = request.header("range", range);
-    } else {
-        request = request.header("range", "bytes=0-");
-    }
-    let Ok(response) = request.send() else {
-        return (502, Vec::new(), b"rede".to_vec());
-    };
-    let status = response.status().as_u16();
-    let mut headers = Vec::new();
-    for name in ["content-type", "content-range", "accept-ranges", "content-length"] {
-        if let Some(value) = response.headers().get(name).and_then(|value| value.to_str().ok()) {
-            headers.push((name.to_string(), value.to_string()));
-        }
-    }
-    let Ok(bytes) = response.bytes() else {
-        return (502, headers, Vec::new());
-    };
-    if bytes.len() > 16 * 1024 * 1024 {
-        return (status, headers, bytes[..16 * 1024 * 1024].to_vec());
-    }
-    (status, headers, bytes.to_vec())
+    boot(app);
+    let (tracks, lyrics, covers) = tokio::task::spawn_blocking(drive_play::repair_library)
+        .await
+        .map_err(|error| error.to_string())??;
+    Ok(RepairReport { tracks, lyrics, covers })
 }
 
 #[tauri::command]
