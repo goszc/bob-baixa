@@ -171,6 +171,60 @@ pub fn drive_file_link(id: &str) -> String {
     format!("https://drive.google.com/file/d/{id}/view")
 }
 
+/// Windows `CRED_MAX_CREDENTIAL_BLOB_SIZE`. The password is stored as UTF-16, so the blob is two bytes per unit.
+pub const WINDOWS_CREDENTIAL_BLOB_MAX: usize = 2560;
+
+pub fn credential_blob_bytes(secret: &str) -> usize {
+    secret.encode_utf16().count().saturating_mul(2)
+}
+
+pub fn credential_fits(secret: &str) -> bool {
+    !secret.is_empty() && credential_blob_bytes(secret) <= WINDOWS_CREDENTIAL_BLOB_MAX
+}
+
+/// Credential Manager keeps only the refresh token. Older builds wrote the whole token JSON.
+pub fn stored_refresh(raw: &str) -> Option<String> {
+    let raw = raw.trim().trim_start_matches('\u{feff}');
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(rest) = raw.strip_prefix('{') {
+        let _ = rest;
+        let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+        let token = value
+            .get("refresh_token")
+            .or_else(|| value.get("refreshToken"))
+            .and_then(|item| item.as_str())
+            .unwrap_or("")
+            .trim();
+        if token.is_empty() {
+            None
+        } else {
+            Some(token.to_string())
+        }
+    } else {
+        Some(raw.to_string())
+    }
+}
+
+pub fn token_gap(error: &str) -> bool {
+    error.starts_with("sem acesso ao drive")
+}
+
+/// Resumable upload metadata. The body is UTF-8 JSON; names are not re-encoded.
+pub fn upload_metadata_json(name: &str, parent: &str, props: &[(&str, &str)]) -> String {
+    let mut properties = serde_json::Map::new();
+    for (key, value) in props {
+        properties.insert((*key).to_string(), serde_json::Value::String((*value).to_string()));
+    }
+    serde_json::to_string(&serde_json::json!({
+        "name": name,
+        "parents": [parent],
+        "appProperties": properties,
+    }))
+    .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,5 +285,53 @@ mod tests {
         assert!(cut.len() <= 120);
         assert!(cut.is_char_boundary(cut.len()));
         assert_eq!(truncate_property("Curta"), "Curta");
+    }
+
+    #[test]
+    fn a_missing_token_is_an_error_instead_of_a_silent_wait() {
+        let mut item = DriveUploadState::fresh();
+        assert_eq!(item.phase, DrivePhase::Waiting);
+        let reason = "sem acesso ao drive: não consegui ler o refresh token";
+        item.fail(reason, 50, 3_600);
+        assert_eq!(item.phase, DrivePhase::Failed);
+        assert!(token_gap(&item.error));
+        assert!(claim_index(&[item.clone()], 50).is_none());
+        item.retry();
+        assert_eq!(item.phase, DrivePhase::Waiting);
+        assert!(claim_index(&[item], 50).is_some());
+    }
+
+    #[test]
+    fn only_the_refresh_token_fits_in_the_windows_credential_blob() {
+        let refresh = format!("1//{}", "b".repeat(180));
+        let access = format!("ya29.{}", "a".repeat(2_000));
+        let whole = format!(
+            r#"{{"refreshToken":"{refresh}","accessToken":"{access}","expiresAt":1,"email":"gust.cust047@gmail.com"}}"#
+        );
+        assert!(credential_blob_bytes(&whole) > WINDOWS_CREDENTIAL_BLOB_MAX);
+        assert!(!credential_fits(&whole));
+        assert!(credential_fits(&refresh));
+        assert_eq!(credential_blob_bytes("ab"), 4);
+        assert_eq!(stored_refresh(&refresh).as_deref(), Some(refresh.as_str()));
+        assert_eq!(stored_refresh(&whole).as_deref(), Some(refresh.as_str()));
+        assert_eq!(stored_refresh("  ").as_deref(), None);
+    }
+
+    #[test]
+    fn upload_metadata_keeps_fullwidth_unicode_as_utf8() {
+        let names = [
+            "Low Roar - \u{FF02}I'll Keep Coming\u{FF02} [KnrGMHhnqrw].mp4",
+            "Péricles - Se Eu Largar O Freio \u{FF5C} OFICIAL [aSfyjDLvcVo].mp4",
+        ];
+        for name in names {
+            let body = upload_metadata_json(name, "pasta", &[("bobTitle", name), ("bobKind", "video")]);
+            let bytes = body.as_bytes();
+            assert!(std::str::from_utf8(bytes).is_ok());
+            let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(value["name"], name);
+            assert_eq!(value["appProperties"]["bobTitle"], name);
+            assert!(body.contains("\u{FF02}") || body.contains("\u{FF5C}") || body.contains("Péricles"));
+            assert!(!body.contains('%'));
+        }
     }
 }

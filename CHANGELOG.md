@@ -1,5 +1,9 @@
 # changelog
 
+## 0.5.3
+
+- o acesso do drive no windows só guarda o refresh token no gerenciador de credenciais. o access token fica na memória. sem o recurso nativo do keyring a leitura voltava vazia, a fila ficava em aguardando e o log parava em "conectado". se o gerenciador falhar, o refresh token vai para um arquivo cifrado com dpapi. sem token, o item vira erro em vez de esperar calado. nomes com caractere fullwidth sobem em json utf-8, e cada passo do envio entra no drive.log
+
 ## 0.5.2
 
 - o envio ao drive mostra aguardando, o percentual, o link no drive ou o erro com tentar de novo. o google responde 308 quando o arquivo ainda não acabou, e o cliente tratava isso como redirecionamento, então o envio não terminava e a fila ficava parada. testar conexão mostra o e-mail e a cota. o registro fica em drive.log
