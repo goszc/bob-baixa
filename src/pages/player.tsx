@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
   Ellipsis,
   Heart,
+  PanelRightClose,
+  PanelRightOpen,
   Maximize2,
   Pause,
   Play,
@@ -14,12 +16,12 @@ import {
   Sparkles,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react"
 import { Segmented } from "../components/segmented"
 import { Scrubber } from "../components/scrubber"
 import { Thumb } from "../components/thumb"
 import { Equalizer } from "../components/equalizer"
-import { LibraryPanel } from "../components/library-panel"
 import { FindLyrics, Karaoke } from "../components/lyrics-tools"
 import { invoke, isTauri } from "../lib/api"
 import { runAi } from "../lib/ai-activity"
@@ -239,6 +241,7 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
           <button type="button" className="rounded-lg px-3 py-2 text-left text-[13px] hover:bg-surface" onClick={() => track && nudgeLyrics(track.path, 0.5)}>
             +0,5s
           </button>
+          {source ? <p className="px-3 py-2 text-[12px] text-muted">{t(source)}</p> : null}
         </div>
       ) : null}
       {player.lyricsState === "loading" ? <p className="px-3 py-6 text-[14px] text-muted">{t("lyrics_loading")}</p> : null}
@@ -265,7 +268,6 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
           ) : null}
         </div>
       ) : null}
-      {source ? <p className="px-3 pb-1 text-[12px] text-muted">{t(source)}</p> : null}
       {note ? <p className="px-3 pb-2 text-[12px] text-muted">{note}</p> : null}
       <div ref={listRef} className="relative min-h-0 flex-1 space-y-1 overflow-auto pb-6">
         {lines.map((line, index) => {
@@ -294,13 +296,107 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
   )
 }
 
+function LyricStage({ onClose, onFind, onKaraoke }: { onClose: () => void; onFind: () => void; onKaraoke: () => void }) {
+  const player = usePlayer()
+  const app = useApp()
+  const t = useT()
+  const listRef = useRef<HTMLDivElement>(null)
+  const [more, setMore] = useState(false)
+  const [chrome, setChrome] = useState(true)
+  const track = currentTrack(player)
+  const saved = useTranslation(track?.path || "")
+  const lyrics = player.lyrics
+  const lines = lyrics?.lines ?? []
+  const nudge = track ? lyricNudgeFor(track.path) : 0
+  const synced = Boolean(lyrics?.synced)
+  const found = synced && lyrics ? activeLine(lines, lyricClock(player.currentTime, nudge)) : -1
+  const current = found >= 0 ? found : lines.length ? 0 : -1
+  const translated = saved?.status === "done" ? saved.lines : null
+  useEffect(() => {
+    const list = listRef.current
+    const node = list?.querySelector<HTMLElement>("[data-lyric-active='true']")
+    if (!list || !node) return
+    const top = node.offsetTop - list.clientHeight * 0.38
+    list.scrollTo({ top, behavior: "smooth" })
+  }, [current])
+  useEffect(() => {
+    let timer = window.setTimeout(() => setChrome(false), 2400)
+    const wake = () => {
+      setChrome(true)
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => setChrome(false), 2400)
+    }
+    window.addEventListener("pointermove", wake)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener("pointermove", wake)
+    }
+  }, [])
+  return (
+    <div className="absolute inset-0 z-20 overflow-hidden text-white">
+      <div className="absolute inset-0 bg-[#0c0c0c]" style={{ background: "radial-gradient(980px 560px at 15% 0%, color-mix(in srgb, var(--accent) 58%, transparent), transparent 68%), #0c0c0c" }} />
+      {track?.thumbnail ? <img src={track.thumbnail} alt="" className="lyric-wash" /> : <div className="lyric-wash lyric-wash-color" />}
+      <div className={cn("pointer-events-none absolute inset-0 bg-black/35")} />
+      <div className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-2 px-8 py-5 transition-opacity duration-300", chrome || more ? "opacity-100" : "pointer-events-none opacity-0")}>
+        <button type="button" className="rounded-full bg-white/15 px-3 py-1 text-[13px]" onClick={() => track && lines.length && startTranslation(track.path, lines.map((line) => line.text), app.config.translateLang || "pt")}>
+          {t("lyrics_translate")}
+        </button>
+        <button type="button" className="rounded-full bg-white/15 px-3 py-1 text-[13px]" onClick={() => track && nudgeLyrics(track.path, 0.5)}>
+          {t("lyrics_sync")}
+        </button>
+        <button type="button" aria-label={t("lyrics_more")} title={t("lyrics_more")} className="grid h-8 w-8 place-items-center rounded-full bg-white/15" onClick={() => setMore((value) => !value)}>
+          <Ellipsis className="h-4 w-4" />
+        </button>
+        <button type="button" aria-label={t("close")} title={t("close")} className="ml-auto grid h-9 w-9 place-items-center rounded-full bg-white/15" onClick={onClose}>
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      {more ? (
+        <div className="absolute top-16 left-8 z-10 flex flex-col rounded-xl bg-black/60 p-1 text-[13px]">
+          <button type="button" className="rounded-lg px-3 py-2 text-left hover:bg-white/10" onClick={onFind}>
+            {t("lyrics_find")}
+          </button>
+          <button type="button" className="rounded-lg px-3 py-2 text-left hover:bg-white/10" onClick={onKaraoke}>
+            {t("lyrics_karaoke")}
+          </button>
+        </div>
+      ) : null}
+      <div ref={listRef} className="relative z-[1] h-full overflow-auto px-8 pt-28 pb-32 md:px-16">
+        {lines.map((line, index) => {
+          const on = synced && index === current
+          return (
+            <button
+              key={`${line.at}-${index}`}
+              type="button"
+              data-lyric-active={on ? "true" : "false"}
+              onClick={() => {
+                if (synced) seek(line.at + nudge)
+              }}
+              className={cn("lyric-stage-line", on ? "is-on" : "is-dim")}
+            >
+              {line.text}
+              {translated?.[index] ? <span className="mt-2 block text-[18px] font-normal text-white/70">{translated[index]}</span> : null}
+            </button>
+          )
+        })}
+      </div>
+      <div className="absolute bottom-6 left-8 z-10 flex items-center gap-3">
+        <Thumb src={track?.thumbnail} videoUrl={track?.pageUrl || track?.title} className="h-11 w-11 rounded-lg" />
+        <span className="min-w-0">
+          <span className="block truncate text-[14px] font-medium">{track?.title}</span>
+          <span className="block truncate text-[12px] text-white/70">{track?.artist}</span>
+        </span>
+      </div>
+    </div>
+  )
+}
+
 export function Player() {
   const app = useApp()
   const player = usePlayer()
   const music = useMusic()
   const t = useT()
   const rootRef = useRef<HTMLDivElement>(null)
-  const [query, setQuery] = useState("")
   const [eqOpen, setEqOpen] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
   const [karaoke, setKaraoke] = useState(false)
@@ -693,16 +789,15 @@ export function Player() {
           />
           <aside className="flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-line transition-[width] duration-200" style={{ width: panelOpen ? panelWidth : 0 }}>
             <div className="flex shrink-0 items-center gap-2 px-3 pt-3">
-              <button type="button" className="text-[12px] text-muted hover:text-ink" onClick={() => setPanelOpen(false)}>
-                {t("panel_collapse")}
+              <button type="button" aria-label={t("panel_collapse")} title={t("panel_collapse")} className="grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-soft hover:text-ink" onClick={() => setPanelOpen(false)}>
+                <PanelRightClose className="h-4 w-4" />
               </button>
             </div>
             <div className="shrink-0 px-3 pt-2">
               <Segmented
-                value={player.panel}
+                value={player.panel === "lyrics" ? "lyrics" : "queue"}
                 onChange={setPanel}
                 options={[
-                  { value: "library", label: t("player_library") },
                   { value: "queue", label: t("player_queue") },
                   { value: "lyrics", label: t("player_lyrics") },
                 ]}
@@ -710,18 +805,6 @@ export function Player() {
             </div>
             {player.panel === "lyrics" ? (
               <div className="mt-2 flex min-h-0 flex-1 flex-col">{lyricsPane}</div>
-            ) : player.panel === "library" ? (
-              <div className="min-h-0 flex-1">
-                <LibraryPanel
-                  tracks={library}
-                  pending={pending}
-                  query={query}
-                  onQuery={setQuery}
-                  renderTrack={(item, onPlay) => (
-                    <TrackButton track={item} active={item.path === track?.path} playing={player.playing && item.path === track?.path} onClick={onPlay} />
-                  )}
-                />
-              </div>
             ) : (
               <div className="min-h-0 flex-1">
                 {queue.length === 0 ? (
@@ -777,17 +860,16 @@ export function Player() {
       ) : null}
       {karaoke && player.lyrics ? <Karaoke lyrics={player.lyrics} time={lyricClock(player.currentTime, track ? lyricNudgeFor(track.path) : 0)} onClose={() => setKaraoke(false)} /> : null}
       {!panelOpen && !cinema ? (
-        <button type="button" className="absolute right-3 top-3 z-10 rounded-full bg-soft px-3 py-1 text-[12px] text-muted" onClick={() => setPanelOpen(true)}>
-          {t("panel_expand")}
+        <button type="button" aria-label={t("panel_expand")} title={t("panel_expand")} className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-full bg-soft text-muted" onClick={() => setPanelOpen(true)}>
+          <PanelRightOpen className="h-4 w-4" />
         </button>
       ) : null}
       {lyricStage ? (
-        <div className="absolute inset-0 z-20 flex flex-col bg-bg p-8">
-          <button type="button" className="mb-4 self-end text-[13px] text-muted" onClick={() => setLyricStage(false)}>
-            {t("close")}
-          </button>
-          <div className="min-h-0 flex-1">{lyricsPane}</div>
-        </div>
+        <LyricStage
+          onClose={() => setLyricStage(false)}
+          onFind={() => setFindOpen(true)}
+          onKaraoke={() => setKaraoke(true)}
+        />
       ) : null}
     </div>
   )

@@ -5,7 +5,7 @@ import { cn } from "../lib/cn"
 import { useMusic } from "../lib/music"
 import { playTracks } from "../lib/player"
 import { useLibraryTracks } from "../lib/use-library"
-import { applyUpdate, closeConfirm, dismissNotes, enqueueItems, go, runSearch, setSearchQuery, useApp, useT } from "../store"
+import { applyUpdate, closeConfirm, dismissNotes, enqueueItems, go, runSearch, setConfig, setDraft, setSearchQuery, useApp, useT } from "../store"
 import { ConfirmDialog, NotesDialog } from "./ui/dialog"
 import { Logo } from "./logo"
 import { NowPlaying } from "./now-playing"
@@ -16,8 +16,9 @@ const NAV: { id: Page; key: Key }[] = [
   { id: "home", key: "nav_home" },
   { id: "likes", key: "nav_likes" },
   { id: "search", key: "nav_search" },
-  { id: "player", key: "nav_library" },
+  { id: "library", key: "nav_library" },
   { id: "discover", key: "nav_discover" },
+  { id: "download", key: "nav_download" },
   { id: "playlists", key: "nav_playlists" },
 ]
 
@@ -65,7 +66,7 @@ function QueueRing({ progress, label }: { progress: number; label: string }) {
   const circ = 2 * Math.PI * radius
   const offset = circ * (1 - Math.min(1, Math.max(0, progress)))
   return (
-    <button type="button" aria-label={label} title={label} onClick={() => go("queue")} className="grid h-9 w-9 place-items-center text-muted hover:text-ink">
+    <button type="button" aria-label={label} title={label} onClick={() => go("download")} className="grid h-9 w-9 place-items-center text-muted hover:text-ink">
       <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
         <circle cx="10" cy="10" r={radius} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
         <circle cx="10" cy="10" r={radius} fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" transform="rotate(-90 10 10)" />
@@ -99,7 +100,11 @@ export function Shell({ children }: { children: ReactNode }) {
         void navigator.clipboard
           .readText()
           .then((text) => {
-            if (/youtu\.be|youtube\.com/i.test(text)) setPaste(text.trim())
+            const url = text.trim()
+            if (!/youtu\.be|youtube\.com/i.test(url)) return
+            setDraft(url)
+            go("download")
+            setPaste(url)
           })
           .catch(() => {})
       }
@@ -110,6 +115,8 @@ export function Shell({ children }: { children: ReactNode }) {
   function downloadPaste(audio: boolean) {
     const url = paste
     setPaste("")
+    setConfig(audio ? { audioOnly: true, audioFormat: "mp3" } : { audioOnly: false, container: "mp4" })
+    go("download")
     void enqueueItems([{ url, title: url, audioOnly: audio, container: audio ? undefined : "mp4", audioFormat: audio ? "mp3" : undefined }])
   }
   return (
@@ -152,9 +159,13 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
           ))}
         </nav>
-        <main className={cn("min-h-0 flex-1", app.page === "player" ? "overflow-hidden" : "overflow-auto")}>
-          {app.page === "player" ? (
-            <div key="player" className="animate-rise h-full">
+        <main className={cn("min-h-0 flex-1", app.page === "player" || app.page === "library" ? "overflow-hidden" : "overflow-auto")}>
+          {app.page === "player" || app.page === "library" ? (
+            <div key={app.page} className="animate-rise h-full">
+              {children}
+            </div>
+          ) : app.page === "home" || app.page === "discover" || app.page === "download" || app.page === "likes" || app.page === "playlists" ? (
+            <div key={app.page} className="animate-rise px-6 py-8 md:px-8">
               {children}
             </div>
           ) : (

@@ -115,7 +115,7 @@ function initial(): PlayerState {
     muted: readMuted(volume),
     shuffle: false,
     repeat: "off",
-    panel: "library",
+    panel: "queue",
     lyrics: null,
     lyricsState: "idle",
     error: null,

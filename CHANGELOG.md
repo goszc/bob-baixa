@@ -6,7 +6,12 @@
 - a tradução da letra continua quando se troca de tela e volta guardada na faixa
 - curtidas fica na barra, logo abaixo de início, com a quantidade
 - apagar uma faixa apaga o arquivo no Google Drive de vez e tira do índice do celular, depois de confirmar
-- a barra lateral fica em início, buscar, biblioteca, curtidas, descobrir e playlists. a cor da capa pinta o fundo e o play. a busca global, o colar de um link, o anel de download e o chip da ia ficam discretos
+- a barra lateral fica em início, curtidas, buscar, biblioteca, descobrir, baixar e playlists. a cor da capa pinta o fundo e o play. a busca global, o colar de um link, o anel de download e o chip da ia ficam discretos
+- a biblioteca é uma página inteira, com a barra de baixo. o painel do player fica só com fila e letra
+- a letra em tela cheia usa o fundo da capa, a linha ativa grande e uma barra que some sozinha
+- início preenche a largura: continuar ouvindo e mais tocadas da semana
+- descobrir mostra sugestões e o que foi descoberto recentemente
+- baixar fica logo abaixo de descobrir. um campo, mp3 ou mp4 (o mesmo formato de descobrir música), a qualidade no menu e a fila com progresso, cancelar e tentar de novo
 - o menu do botão direito abre no cursor, com seis itens. as listas mostram o play ao passar o mouse. o vídeo preenche a área. a letra tem traduzir, sincronizar e um menu
 
 ## 0.6.6

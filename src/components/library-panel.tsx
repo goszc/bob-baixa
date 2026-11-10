@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { Ellipsis, Heart, Play } from "lucide-react"
+import { Ellipsis, Heart, Play, Rows3 } from "lucide-react"
 import { groupTracks, relatedTracks, trackKey, type Track } from "../lib/library"
 import { parseM3u } from "../lib/listening"
 import {
@@ -165,17 +165,6 @@ export function LibraryPanel({
           className="h-9"
           aria-label={t("player_filter")}
         />
-        <button
-          type="button"
-          className="text-[12px] text-muted hover:text-ink"
-          onClick={() => {
-            const next = density === "compact" ? "comfortable" : "compact"
-            setDensity(next)
-            localStorage.setItem("bob-baixa-density", next)
-          }}
-        >
-          {t("density_toggle")}
-        </button>
         <div className="flex items-center gap-2">
           <div className="flex h-8 min-w-0 flex-1 rounded-lg bg-soft p-0.5" role="tablist" aria-label={t("player_library")}>
             {MAIN.map((item) => (
@@ -207,6 +196,19 @@ export function LibraryPanel({
             </button>
             {more ? (
               <div className="absolute right-0 z-20 mt-1 w-40 rounded-xl border border-line bg-surface p-1 shadow-sm">
+                <button
+                  type="button"
+                  aria-label={t("density_toggle")}
+                  title={t("density_toggle")}
+                  className="grid h-9 w-full place-items-center rounded-lg text-muted hover:bg-soft hover:text-ink"
+                  onClick={() => {
+                    const next = density === "compact" ? "comfortable" : "compact"
+                    setDensity(next)
+                    localStorage.setItem("bob-baixa-density", next)
+                  }}
+                >
+                  <Rows3 className="h-4 w-4" />
+                </button>
                 {MORE.map((item) => (
                   <button
                     key={item.value}

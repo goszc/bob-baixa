@@ -150,6 +150,27 @@ function wire() {
     pulse()
     toggle()
   })
+  let phoneFormat = localStorage.getItem("bob-format") === "mp4" ? "mp4" : "mp3"
+  const paintFormat = () => {
+    document.querySelector("#fmt-mp3")?.setAttribute("aria-pressed", phoneFormat === "mp3" ? "true" : "false")
+    document.querySelector("#fmt-mp4")?.setAttribute("aria-pressed", phoneFormat === "mp4" ? "true" : "false")
+  }
+  paintFormat()
+  document.querySelector("#fmt-mp3")?.addEventListener("click", () => {
+    phoneFormat = "mp3"
+    localStorage.setItem("bob-format", phoneFormat)
+    paintFormat()
+  })
+  document.querySelector("#fmt-mp4")?.addEventListener("click", () => {
+    phoneFormat = "mp4"
+    localStorage.setItem("bob-format", phoneFormat)
+    paintFormat()
+  })
+  document.querySelector("#link-go")?.addEventListener("click", () => {
+    const link = document.querySelector("#linkbox")?.value?.trim()
+    const note = document.querySelector("#link-note")
+    if (note) note.textContent = link ? `baixando em ${phoneFormat.toUpperCase()}.` : "cole um link primeiro."
+  })
   document.querySelector("#discover-one")?.addEventListener("click", () => {
     const note = document.querySelector("#discover-note")
     if (note) note.textContent = "baixando 1 faixa no formato padrão."
@@ -174,6 +195,7 @@ function wire() {
       document.querySelector("#library").hidden = view !== "library"
       document.querySelector("#likes").hidden = view !== "likes"
       document.querySelector("#discover").hidden = view !== "discover"
+      document.querySelector("#download").hidden = view !== "download"
       if (view === "home") renderHome()
       else if (view === "likes") renderLikes()
       else if (view === "library") renderLibrary()
@@ -211,6 +233,7 @@ function selectTab(next) {
   for (const item of document.querySelectorAll("[data-tab]")) item.setAttribute("aria-selected", item.dataset.tab === next ? "true" : "false")
   document.querySelector("#lyric").hidden = next !== "lyrics"
   document.querySelector("#queue").hidden = next !== "queue"
+  document.querySelector("#sheet")?.classList.toggle("lyrics", next === "lyrics")
   if (next === "queue") renderQueue()
   if (next === "lyrics" && visible[index]) showLyrics(visible[index], activeMedia()?.currentTime || 0)
 }
@@ -246,6 +269,7 @@ function closeSheet() {
 
 function showWelcome(message) {
   document.documentElement.classList.remove("has-session")
+  document.documentElement.classList.remove("is-waiting")
   gate.hidden = false
   player.hidden = true
   waiting.hidden = true
@@ -282,6 +306,9 @@ function setLoading(on) {
     view = "library"
     document.querySelector("#home").hidden = true
     document.querySelector("#library").hidden = false
+    document.querySelector("#likes").hidden = true
+    document.querySelector("#discover").hidden = true
+    document.querySelector("#download").hidden = true
     document.querySelector('[data-view="library"]')?.setAttribute("aria-current", "page")
     document.querySelector('[data-view="home"]')?.removeAttribute("aria-current")
   }
@@ -516,6 +543,9 @@ function showHome() {
   view = "home"
   document.querySelector("#home").hidden = false
   document.querySelector("#library").hidden = true
+  document.querySelector("#likes").hidden = true
+  document.querySelector("#discover").hidden = true
+  document.querySelector("#download").hidden = true
   document.querySelector('[data-view="home"]')?.setAttribute("aria-current", "page")
   document.querySelector('[data-view="library"]')?.removeAttribute("aria-current")
   renderHome()
@@ -560,16 +590,16 @@ function renderHome() {
     return
   }
   const last = tracks.find((track) => track.id === localStorage.getItem("bob-last")) || tracks[0]
-  home.append(sectionLabel("continuar ouvindo"))
-  home.append(heroCard(last))
   const mix = mixTracks(tracks).filter((track) => track.id !== last.id)
+  home.append(sectionLabel("continuar ouvindo"))
+  home.append(gridOf([last, ...mix.slice(0, 5)]))
   if (mix.length) {
     home.append(sectionLabel("mix do dia"))
-    home.append(rail(mix))
+    home.append(gridOf(mix.slice(0, 6)))
   }
   const loved = tracks.filter((track) => liked.has(track.id))
   home.append(sectionLabel("curtidas"))
-  if (loved.length) home.append(rail(loved))
+  if (loved.length) home.append(gridOf(loved))
   else home.append(note("curta uma faixa e ela fica aqui."))
   const recentIds = readIds("bob-recent")
   const recent = recentIds.map((id) => tracks.find((track) => track.id === id)).filter((track) => track && track.id !== last.id)
@@ -731,6 +761,27 @@ function heroCard(track) {
     play(Math.max(0, tracks.indexOf(track)))
   }
   return button
+}
+
+function gridOf(rows) {
+  const box = document.createElement("div")
+  box.className = "home-grid"
+  for (const track of rows) {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.setAttribute("aria-label", labelFor(track))
+    const title = document.createElement("strong")
+    title.textContent = track.title
+    const artist = document.createElement("small")
+    artist.textContent = track.artist
+    button.append(coverImage(track, ""), title, artist)
+    button.onclick = () => {
+      visible = rows
+      play(rows.indexOf(track))
+    }
+    box.append(button)
+  }
+  return box
 }
 
 function rail(rows) {

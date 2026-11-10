@@ -38,6 +38,8 @@
       button { cursor: pointer; }
       :focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
       [hidden] { display: none !important; }
+      html.is-waiting #signin { display: none !important; }
+      html.is-waiting #waiting { display: block !important; }
       main {
         width: min(100%, 720px);
         margin: 0 auto;
@@ -80,9 +82,12 @@
       }
       #player { display: none; }
       html.has-session #player { display: block; }
-      .views { display: flex; gap: 18px; margin: 8px 0 16px; flex-wrap: wrap; }
+      .views { display: flex; gap: 12px; margin: 8px 0 16px; flex-wrap: nowrap; overflow-x: auto; }
+      .views button { flex: 0 0 auto; font-size: 15px; }
       .pair { display: flex; gap: 8px; }
-      .pair button { flex: 1; min-height: 44px; border: 0; border-radius: 999px; background: var(--soft); color: var(--ink); }
+      .pair button { flex: 1; min-height: 44px; border: 0; border-radius: 999px; background: var(--surface); color: var(--ink); }
+      .pair button[aria-pressed="true"] { background: var(--fill); color: var(--onfill); }
+      #linkbox { width: 100%; min-height: 48px; margin-top: 8px; border: 0; border-radius: 16px; background: var(--surface); color: var(--ink); padding: 0 14px; }
       .views button, .segments button, .tabs button { background: none; border: 0; color: var(--muted); min-height: 44px; padding: 0; }
       .views button[aria-current="page"], .segments button[aria-selected="true"], .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 620; }
       .segments {
@@ -108,6 +113,11 @@
       .kicker { color: var(--muted); font-size: 13px; margin: 0 0 8px; }
       .hero strong { display: block; margin-top: 12px; font-size: 22px; letter-spacing: -0.03em; font-weight: 620; }
       .hero small, .meta small, .grid small { color: var(--muted); font-size: 14px; }
+      .home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px; }
+      .home-grid button { display: block; background: none; border: 0; padding: 0; text-align: left; min-width: 0; overflow: hidden; }
+      .home-grid img.thumb, .home-grid span.thumb { width: 100%; height: auto; aspect-ratio: 1; border-radius: 16px; display: block; object-fit: cover; background: var(--surface); flex: none; }
+      .home-grid strong { display: block; margin-top: 8px; font-size: 14px; font-weight: 560; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .home-grid small { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .rail { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; scroll-snap-type: x mandatory; }
       .rail button {
         width: 148px; flex: 0 0 auto; scroll-snap-align: start; background: none; border: 0; padding: 0; text-align: left;
@@ -172,6 +182,17 @@
       #lyric button[aria-current="true"] {
         color: var(--ink); font-size: 28px; letter-spacing: -0.03em; opacity: 1; filter: none; font-weight: 620;
       }
+      #sheet.lyrics { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-content: start; column-gap: 12px; }
+      #sheet.lyrics #wash, #sheet.lyrics #wash-img { grid-column: 1 / -1; grid-row: 1 / -1; height: 120%; top: -8%; }
+      #sheet.lyrics #grab, #sheet.lyrics .row, #sheet.lyrics #seek, #sheet.lyrics #time, #sheet.lyrics .tabs, #sheet.lyrics #lyric, #sheet.lyrics #queue { grid-column: 1 / -1; }
+      #sheet.lyrics #stage { grid-column: 1; width: 64px; height: 64px; aspect-ratio: auto; margin: 0; border-radius: 14px; }
+      #sheet.lyrics .now { grid-column: 2; align-self: center; margin: 0; }
+      #sheet.lyrics #title { font-size: 15px; }
+      #sheet.lyrics .row { margin-top: 8px; }
+      #sheet.lyrics .row button.main { width: 52px; height: 52px; }
+      #sheet.lyrics #lyric { padding: 12px 4px 28vh; }
+      #sheet.lyrics #lyric button { font-size: 26px; font-weight: 620; letter-spacing: -0.04em; padding: 12px 0; }
+      #sheet.lyrics #lyric button[aria-current="true"] { font-size: 36px; font-weight: 700; transform: scale(1.03); transform-origin: left center; }
       #lyric button .said { color: var(--ink); }
       #lyric button[aria-current="true"] .said { color: var(--ink); }
       #queue button { border-top: 1px solid var(--line); }
@@ -228,7 +249,10 @@
     <script>
       try {
         var exp = Number(localStorage.getItem("bob-exp") || 0)
-        if (localStorage.getItem("bob-access") && exp > Date.now() + 15000) document.documentElement.classList.add("has-session")
+        var access = localStorage.getItem("bob-access")
+        var hint = localStorage.getItem("bob-hint")
+        if (access && exp > Date.now() + 15000) document.documentElement.classList.add("has-session")
+        else if (access || hint) document.documentElement.classList.add("is-waiting")
       } catch (e) {}
     </script>
     <main>
@@ -251,10 +275,21 @@
           <button type="button" data-view="likes">Curtidas</button>
           <button type="button" data-view="library">Biblioteca</button>
           <button type="button" data-view="discover">Descobrir</button>
+          <button type="button" data-view="download">Baixar</button>
         </nav>
         <div id="pull" aria-hidden="true"></div>
         <section id="home" aria-label="início"></section>
         <section id="likes" hidden aria-label="curtidas"></section>
+        <section id="download" hidden aria-label="baixar">
+          <p class="lead">cole um link do youtube.</p>
+          <input id="linkbox" type="url" placeholder="https://youtu.be/…" aria-label="link" />
+          <div class="pair" style="margin-top:12px">
+            <button type="button" id="fmt-mp3" aria-pressed="true">MP3</button>
+            <button type="button" id="fmt-mp4" aria-pressed="false">MP4</button>
+          </div>
+          <button class="go" id="link-go" type="button" style="margin-top:12px">Baixar</button>
+          <p id="link-note" class="lead"></p>
+        </section>
         <section id="discover" hidden aria-label="descobrir">
           <p class="lead">a partir do que está tocando e do que você mais ouve.</p>
           <div class="pair">
