@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react"
 import type { ListenEvent, LibraryManifest } from "./listening"
-import { parseManifest } from "./listening"
+import { mergeEvents, parseManifest } from "./listening"
+import { invoke, isTauri } from "./api"
 import { fileName } from "./format.ts"
 import { trackKey, type Track } from "./library"
 
@@ -44,6 +45,8 @@ interface MusicState {
   eqBands: number[]
   eqScope: EqScope
   eqByPath: Record<string, EqMemory>
+  lyricNudge: Record<string, number>
+  cinema: boolean
 }
 
 const KEY = "bob-baixa-music"
@@ -64,6 +67,8 @@ const empty = (): MusicState => ({
   eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   eqScope: "global",
   eqByPath: {},
+  lyricNudge: {},
+  cinema: false,
 })
 
 function load(): MusicState {
@@ -89,6 +94,8 @@ function load(): MusicState {
       eqBands: Array.isArray(parsed.eqBands) ? parsed.eqBands.map((band) => Number(band) || 0).slice(0, 10) : base.eqBands,
       eqScope: parsed.eqScope === "track" ? "track" : "global",
       eqByPath: parsed.eqByPath && typeof parsed.eqByPath === "object" ? parsed.eqByPath : {},
+      lyricNudge: parsed.lyricNudge && typeof parsed.lyricNudge === "object" ? parsed.lyricNudge : {},
+      cinema: Boolean(parsed.cinema),
     }
   } catch {
     return empty()
@@ -115,7 +122,35 @@ function persist() {
   state = next
   if (typeof localStorage !== "undefined") localStorage.setItem(KEY, JSON.stringify(next))
   emit()
-  if (!silentSync) syncHook?.()
+  if (!silentSync) {
+    syncHook?.()
+    scheduleListens()
+  }
+}
+
+let listenTimer = 0
+function scheduleListens() {
+  if (!isTauri() || typeof window === "undefined") return
+  window.clearTimeout(listenTimer)
+  listenTimer = window.setTimeout(() => {
+    void invoke("save_listens", { json: JSON.stringify(state.events) }).catch(() => {})
+  }, 800)
+}
+
+if (isTauri()) {
+  void invoke<string>("load_listens")
+    .then((raw) => {
+      if (!raw) return
+      const remote = JSON.parse(raw) as ListenEvent[]
+      if (!Array.isArray(remote) || remote.length === 0) return
+      const events = mergeEvents(state.events, remote)
+      if (events.length === state.events.length && events.every((event, index) => event.at === state.events[index]?.at && event.ms === state.events[index]?.ms)) return
+      silentSync = true
+      state = { ...state, events }
+      persist()
+      silentSync = false
+    })
+    .catch(() => {})
 }
 
 export function getMusic() {
@@ -186,7 +221,7 @@ export function applyLibrarySnapshot(raw: string) {
       updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : state.updatedAt,
       playlists: Array.isArray(parsed.playlists) ? parsed.playlists : state.playlists,
       likes: Array.isArray(parsed.likes) ? parsed.likes : state.likes,
-      events: Array.isArray(parsed.events) ? parsed.events.slice(-4000) : state.events,
+      events: Array.isArray(parsed.events) ? mergeEvents(state.events, parsed.events) : state.events,
       recent: Array.isArray(parsed.recent) ? parsed.recent : state.recent,
     }
     persist()
@@ -331,25 +366,61 @@ export function rememberSession(session: SessionSnapshot | null) {
   persist()
 }
 
-export function hear(path: string, title: string, artist: string, deltaMs: number, at: number) {
+export function setCinema(cinema: boolean) {
+  state = { ...state, cinema }
+  persist()
+}
+
+export function lyricNudgeFor(path: string) {
+  return state.lyricNudge[trackKey(path)] ?? 0
+}
+
+export function nudgeLyrics(path: string, delta: number) {
+  const key = trackKey(path)
+  const next = Math.max(-15, Math.min(15, Math.round(((state.lyricNudge[key] ?? 0) + delta) * 2) / 2))
+  state = { ...state, lyricNudge: { ...state.lyricNudge, [key]: next } }
+  persist()
+}
+
+export function liveEvents() {
+  if (!openListen || openListen.ms < 1000) return state.events
+  return mergeEvents(state.events, [openListen])
+}
+
+function commitOpen(keep: boolean) {
+  if (!openListen || openListen.ms < 1000) {
+    if (!keep) openListen = null
+    return
+  }
+  openListen.play = openListen.ms >= 30_000
+  state = { ...state, events: mergeEvents(state.events, [openListen]) }
+  persist()
+  if (!keep) openListen = null
+}
+
+export function hear(path: string, title: string, artist: string, album: string, deltaMs: number, at: number) {
   if (!path || deltaMs < 80 || deltaMs > 2500) return
   if (!openListen || trackKey(openListen.path) !== trackKey(path)) {
-    flushHear(at)
-    openListen = { path, title, artist, at, ms: 0, play: false }
+    commitOpen(false)
+    openListen = { path, title, artist, album, at, ms: 0, play: false }
   }
+  const before = openListen.ms
   openListen.ms += deltaMs
   openListen.title = title || openListen.title
   openListen.artist = artist || openListen.artist
+  openListen.album = album || openListen.album
   if (!openListen.play && openListen.ms >= 30_000) openListen.play = true
+  const crossed = before < 5_000 && openListen.ms >= 5_000
+  const bucket = Math.floor(before / 10_000) !== Math.floor(openListen.ms / 10_000)
+  if (crossed || bucket) commitOpen(true)
 }
 
-export function flushHear(at: number) {
-  if (!openListen) return
-  if (openListen.ms >= 5_000) {
-    state = { ...state, events: [...state.events, { ...openListen, at: openListen.at || at }].slice(-4000) }
-    persist()
-  }
-  openListen = null
+export function flushHear(_at: number) {
+  commitOpen(false)
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => flushHear(Date.now()))
 }
 
 export function exportManifest(): string {

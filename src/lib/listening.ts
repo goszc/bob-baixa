@@ -4,6 +4,7 @@ export interface ListenEvent {
   path: string
   title: string
   artist: string
+  album?: string
   at: number
   ms: number
   play: boolean
@@ -17,12 +18,20 @@ export interface Ranked {
   ms: number
 }
 
+export interface MonthBucket {
+  key: string
+  label: string
+  minutes: number
+}
+
 export interface RetroSummary {
   minutes: number
   currentStreak: number
   periodStreak: number
   tracks: Ranked[]
   artists: Ranked[]
+  albums: Ranked[]
+  months: MonthBucket[]
 }
 
 const DAY = 24 * 60 * 60 * 1000
@@ -45,7 +54,20 @@ export function retrospective(events: ListenEvent[], range: RetroRange, now: num
     periodStreak: longestStreak(periodDays),
     tracks: rankTracks(inRange),
     artists: rankArtists(inRange),
+    albums: rankAlbums(inRange),
+    months: monthsIn(inRange, start, now),
   }
+}
+
+export function mergeEvents(local: ListenEvent[], remote: ListenEvent[]) {
+  const map = new Map<string, ListenEvent>()
+  for (const event of [...remote, ...local]) {
+    if (!event || !event.path) continue
+    const key = `${event.path}\n${event.at}`
+    const current = map.get(key)
+    if (!current || event.ms > current.ms) map.set(key, event)
+  }
+  return [...map.values()].sort((left, right) => left.at - right.at).slice(-4000)
 }
 
 function countsAsListen(event: ListenEvent) {
@@ -123,7 +145,38 @@ function rankTracks(events: ListenEvent[]): Ranked[] {
     if (event.artist) current.detail = event.artist
     map.set(event.path, current)
   }
-  return [...map.values()].filter((item) => item.plays > 0 || item.ms >= 15_000).sort(byPlay).slice(0, 8)
+  return [...map.values()].filter((item) => item.plays > 0 || item.ms >= 5_000).sort(byPlay).slice(0, 8)
+}
+
+function rankAlbums(events: ListenEvent[]): Ranked[] {
+  const map = new Map<string, Ranked>()
+  for (const event of events) {
+    const name = (event.album ?? "").trim()
+    if (!name) continue
+    const key = name.toLocaleLowerCase()
+    const current = map.get(key) ?? { key, label: name, detail: event.artist, plays: 0, ms: 0 }
+    current.ms += Math.max(0, event.ms)
+    if (event.play) current.plays += 1
+    map.set(key, current)
+  }
+  return [...map.values()].filter((item) => item.plays > 0 || item.ms >= 5_000).sort(byPlay).slice(0, 8)
+}
+
+function monthsIn(events: ListenEvent[], start: number, now: number): MonthBucket[] {
+  const map = new Map<string, number>()
+  for (const event of events) {
+    if (event.at < start || event.at > now + 1000) continue
+    const date = new Date(event.at)
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+    map.set(key, (map.get(key) ?? 0) + Math.max(0, event.ms))
+  }
+  return [...map.entries()]
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .map(([key, ms]) => {
+      const [year, month] = key.split("-")
+      const label = new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(undefined, { month: "short" })
+      return { key, label, minutes: ms / 60000 }
+    })
 }
 
 function rankArtists(events: ListenEvent[]): Ranked[] {
@@ -137,7 +190,7 @@ function rankArtists(events: ListenEvent[]): Ranked[] {
     if (event.play) current.plays += 1
     map.set(key, current)
   }
-  return [...map.values()].filter((item) => item.plays > 0 || item.ms >= 15_000).sort(byPlay).slice(0, 8)
+  return [...map.values()].filter((item) => item.plays > 0 || item.ms >= 5_000).sort(byPlay).slice(0, 8)
 }
 
 function byPlay(left: Ranked, right: Ranked) {

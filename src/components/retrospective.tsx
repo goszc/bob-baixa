@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react"
 import { invoke, isTauri } from "../lib/api"
+import { runAi } from "../lib/ai-activity"
 import type { RetroRange } from "../lib/listening"
 import { retrospective } from "../lib/listening"
-import { useMusic } from "../lib/music"
+import { liveEvents, useMusic } from "../lib/music"
 import { useT } from "../store"
 
 const RANGES: { value: RetroRange; key: "retro_week" | "retro_month" | "retro_year" | "retro_rolling" }[] = [
@@ -22,7 +23,8 @@ export function Retrospective() {
   const t = useT()
   const [range, setRange] = useState<RetroRange>("week")
   const [wrapped, setWrapped] = useState("")
-  const summary = useMemo(() => retrospective(music.events, range, Date.now()), [music.events, range])
+  const [note, setNote] = useState("")
+  const summary = useMemo(() => retrospective(liveEvents(), range, Date.now()), [music.events, range])
   const top = Math.max(summary.tracks[0]?.ms ?? 0, summary.artists[0]?.ms ?? 0, 1)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -48,17 +50,31 @@ export function Retrospective() {
         type="button"
         className="mt-3 text-left text-[13px] text-muted hover:text-ink"
         onClick={() => {
-          if (!isTauri()) return
-          void invoke<string>("ai_wrapped", {
-            period: range,
-            minutes: summary.minutes,
-            artist: summary.artists[0]?.label ?? "",
-            track: summary.tracks[0]?.label ?? "",
-          }).then(setWrapped)
+          if (!isTauri()) {
+            setNote("sem chave do gemini")
+            return
+          }
+          setNote(t("ai_wrapped"))
+          setWrapped("")
+          void runAi(t("ai_wrapped"), "gemini-3.5-flash-lite", () =>
+            invoke<string>("ai_wrapped", {
+              period: range,
+              minutes: summary.minutes,
+              artist: summary.artists[0]?.label ?? "",
+              track: summary.tracks[0]?.label ?? "",
+            }),
+          )
+            .then((text) => {
+              setWrapped(text)
+              setNote("")
+            })
+            .catch((error: Error) => setNote(error.message))
         }}
       >
         {t("retro_wrapped")}
       </button>
+      <p className="mt-2 text-[12px] text-muted">{t("retro_local")}</p>
+      {note ? <p className="mt-2 text-[13px] text-muted">{note}</p> : null}
       {wrapped ? <p className="mt-3 text-[15px] leading-relaxed">{wrapped}</p> : null}
       {summary.tracks.length === 0 && summary.artists.length === 0 ? (
         <p className="px-1 py-8 text-[14px] leading-relaxed text-muted">{t("retro_empty")}</p>
@@ -66,6 +82,20 @@ export function Retrospective() {
         <div className="mt-5 min-h-0 flex-1 space-y-6 overflow-auto pb-4">
           <Rank title={t("retro_top_tracks")} rows={summary.tracks} top={top} plays={(n) => t("retro_plays", { n })} />
           <Rank title={t("retro_top_artists")} rows={summary.artists} top={top} plays={(n) => t("retro_plays", { n })} />
+          <Rank title={t("retro_albums")} rows={summary.albums} top={top} plays={(n) => t("retro_plays", { n })} />
+          {summary.months.length ? (
+            <section>
+              <h3 className="px-1 text-[13px] text-muted">{t("retro_months")}</h3>
+              <ul className="mt-2 space-y-1">
+                {summary.months.map((month) => (
+                  <li key={month.key} className="flex items-center justify-between px-1 text-[13px]">
+                    <span>{month.label}</span>
+                    <span className="tabular-nums text-muted">{minutesLabel(month.minutes)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
         </div>
       )}
     </div>

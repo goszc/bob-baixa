@@ -39,6 +39,20 @@ test("retrospective covers week, month, calendar year and the last 12 months", (
   assert.ok(rolling.periodStreak >= 1)
 })
 
+test("retrospective ranks albums and months without a model", () => {
+  const now = at(2026, 3, 10)
+  const events = [
+    listen({ path: "a", title: "Alpha", artist: "Ana", album: "Disco", at: at(2026, 3, 10), ms: 120_000 }),
+    listen({ path: "b", title: "Beta", artist: "Bia", album: "Disco", at: at(2026, 2, 2), ms: 90_000 }),
+    listen({ path: "drive:1", title: "Nuvem", artist: "Ana", album: "Ao vivo", at: at(2026, 3, 4), ms: 60_000 }),
+  ]
+  const year = retrospective(events, "year", now)
+  assert.equal(year.albums[0].label, "Disco")
+  assert.equal(year.albums[0].plays, 2)
+  assert.ok(year.months.length >= 2)
+  assert.ok(year.minutes > 3)
+})
+
 test("a missed day breaks the streak but yesterday still counts", () => {
   const now = at(2026, 5, 10)
   const events = [listen({ path: "a", at: at(2026, 5, 8) }), listen({ path: "a", at: at(2026, 5, 7) })]

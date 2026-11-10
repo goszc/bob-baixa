@@ -2,15 +2,16 @@
 
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use bob_core::{
-    cache_victims, content_range_value, content_type_for, cover_matches, embedded_cover, file_stem, image_type,
-    lyric_matches, parse_byte_range, playback_kind, read_embedded, read_sibling_lrc, CachePiece, DRIVE_CACHE_LIMIT,
+    cache_victims, content_range_value, content_type_for, cover_matches, embedded_cover, file_stem, first_audio_note,
+    image_type, lyric_matches, parse_byte_range, playback_kind, read_embedded, read_sibling_lrc, widen_range, CachePiece,
+    DRIVE_CACHE_LIMIT, HEAD_BYTES, READ_AHEAD_BYTES,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{auth, bearer, http, http_stream, log_drive, resumable, root_dir};
+use super::{auth, bearer, http, log_drive, resumable, root_dir, stream_get};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -225,43 +226,62 @@ pub fn cover_file(id: &str) -> Option<PathBuf> {
 }
 
 pub fn open_media(id: &str, range: Option<&str>) -> Result<MediaStream, String> {
+    let started = Instant::now();
     let id = safe_id(id)?;
-    let record = ensure_record(&id).unwrap_or_else(|_| LibraryRecord::bare(&id));
+    let record = find_record(&id).unwrap_or_else(|| LibraryRecord::bare(&id));
     if let Some(stream) = serve_cache(&id, &record, range) {
-        log_drive(&format!("stream {id} do cache"));
+        log_drive(&first_audio_note(&id, started.elapsed().as_millis(), "cache"));
         return Ok(stream);
     }
-    if let Some(stream) = serve_preview(&id, &record, range) {
-        log_drive(&format!("stream {id} da prévia"));
+    if let Some(stream) = serve_covering(&id, &record, range) {
+        log_drive(&first_audio_note(&id, started.elapsed().as_millis(), "cache"));
         return Ok(stream);
     }
-    stream_drive(&id, &record, range)
+    let start = range.and_then(parse_byte_range).map(|parsed| parsed.start).unwrap_or(0);
+    if start == 0 {
+        if let Some(stream) = serve_head(&id, &record) {
+            log_drive(&first_audio_note(&id, started.elapsed().as_millis(), "cabeça local"));
+            return Ok(stream);
+        }
+        if let Some(stream) = serve_preview(&id, &record, range) {
+            log_drive(&first_audio_note(&id, started.elapsed().as_millis(), "prévia"));
+            return Ok(stream);
+        }
+    }
+    let widened = widen_range(range, READ_AHEAD_BYTES);
+    let stream = stream_drive(&id, &record, widened.as_deref().or(range))?;
+    log_drive(&first_audio_note(&id, started.elapsed().as_millis(), "drive"));
+    Ok(stream)
 }
 
 pub fn warm_preview(id: &str) -> Result<(), String> {
     let id = safe_id(id)?;
-    let path = preview_path(&id);
-    if path.is_file() {
+    let head = head_path(&id);
+    let preview = preview_path(&id);
+    if head.is_file() && preview.is_file() {
         return Ok(());
     }
-    let record = ensure_record(&id).unwrap_or_else(|_| LibraryRecord::bare(&id));
-    let span = bob_core::preview_span(record.size, record.duration);
-    let access = bearer(false)?;
-    let url = format!("https://www.googleapis.com/drive/v3/files/{id}?alt=media");
-    let response = http_stream()
-        .get(url)
-        .header("authorization", auth(&access.token))
-        .header("range", format!("bytes=0-{}", span.saturating_sub(1)))
-        .send()
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("prévia recusada ({})", response.status()));
+    let record = find_record(&id).unwrap_or_else(|| LibraryRecord::bare(&id));
+    let preview_span = bob_core::preview_span(record.size, record.duration);
+    let mut span = preview_span.max(HEAD_BYTES);
+    if record.size > 0 {
+        span = span.min(record.size);
     }
+    let url = format!("https://www.googleapis.com/drive/v3/files/{id}?alt=media");
+    let response = stream_get(&url, Some(&format!("bytes=0-{}", span.saturating_sub(1))))?;
     let bytes = response.bytes().map_err(|error| error.to_string())?;
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = head.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(path, &bytes).map_err(|error| error.to_string())
+    let head_len = (HEAD_BYTES as usize).min(bytes.len());
+    if head_len > 0 {
+        std::fs::write(&head, &bytes[..head_len]).map_err(|error| error.to_string())?;
+    }
+    let preview_len = (preview_span as usize).min(bytes.len());
+    if preview_len > 0 && !preview.is_file() {
+        std::fs::write(&preview, &bytes[..preview_len]).map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub fn clear_stream_cache() -> u64 {
@@ -271,7 +291,7 @@ pub fn clear_stream_cache() -> u64 {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
-        if name.ends_with(".preview") {
+        if name.ends_with(".preview") || name.ends_with(".head") {
             continue;
         }
         if let Ok(meta) = entry.metadata() {
@@ -293,6 +313,30 @@ fn dir_bytes(dir: &Path) -> u64 {
 
 fn preview_path(id: &str) -> PathBuf {
     cache_dir().join(format!("{id}.preview"))
+}
+
+fn head_path(id: &str) -> PathBuf {
+    cache_dir().join(format!("{id}.head"))
+}
+
+fn serve_head(id: &str, record: &LibraryRecord) -> Option<MediaStream> {
+    let path = head_path(id);
+    if !path.is_file() {
+        return None;
+    }
+    let bytes = std::fs::read(&path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let total = record.size.max(bytes.len() as u64);
+    let mime = content_type_for(&record.mime, &record.name);
+    let body = PreviewThenDrive {
+        preview: std::io::Cursor::new(bytes),
+        rest_at: std::fs::metadata(&path).ok()?.len(),
+        id: id.to_string(),
+        rest: None,
+    };
+    Some(stream_parts(200, &mime, None, Some(total as usize), Box::new(body)))
 }
 
 fn serve_preview(id: &str, record: &LibraryRecord, range: Option<&str>) -> Option<MediaStream> {
@@ -341,17 +385,9 @@ impl Read for PreviewThenDrive {
 }
 
 fn open_tail(id: &str, start: u64) -> Result<Box<dyn Read + Send>, String> {
-    let access = bearer(false)?;
     let url = format!("https://www.googleapis.com/drive/v3/files/{id}?alt=media");
-    let response = http_stream()
-        .get(url)
-        .header("authorization", auth(&access.token))
-        .header("range", format!("bytes={start}-"))
-        .send()
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("continuação recusada ({})", response.status()));
-    }
+    let end = start.saturating_add(READ_AHEAD_BYTES.saturating_sub(1));
+    let response = stream_get(&url, Some(&format!("bytes={start}-{end}")))?;
     Ok(Box::new(response))
 }
 
@@ -548,6 +584,42 @@ fn attach_sidecars(record: &mut LibraryRecord) {
     }
 }
 
+fn serve_covering(id: &str, record: &LibraryRecord, range: Option<&str>) -> Option<MediaStream> {
+    let start = range.and_then(parse_byte_range).map(|parsed| parsed.start).unwrap_or(0);
+    let prefix = format!("{id}-");
+    let dir = cache_dir();
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with(&prefix) || !name.ends_with(".bin") {
+            continue;
+        }
+        let middle = name.trim_start_matches(&prefix).trim_end_matches(".bin");
+        let Some((raw_start, raw_end)) = middle.split_once('-') else {
+            continue;
+        };
+        let (Ok(file_start), Ok(file_end)) = (raw_start.parse::<u64>(), raw_end.parse::<u64>()) else {
+            continue;
+        };
+        if start < file_start || start > file_end {
+            continue;
+        }
+        let mut file = std::fs::File::open(entry.path()).ok()?;
+        let offset = start - file_start;
+        file.seek(std::io::SeekFrom::Start(offset)).ok()?;
+        let len = file_end - start + 1;
+        let mime = content_type_for(&record.mime, &record.name);
+        let total = record.size.max(file_end.saturating_add(1));
+        return Some(stream_parts(
+            206,
+            &mime,
+            Some(content_range_value(start, file_end, total)),
+            Some(len as usize),
+            Box::new(file.take(len)),
+        ));
+    }
+    None
+}
+
 fn serve_cache(id: &str, record: &LibraryRecord, range: Option<&str>) -> Option<MediaStream> {
     let full = cache_dir().join(format!("{id}.bin"));
     if full.is_file() {
@@ -595,19 +667,10 @@ fn serve_file(path: &Path, record: &LibraryRecord, range: Option<&str>, allow_ra
 }
 
 fn stream_drive(id: &str, record: &LibraryRecord, range: Option<&str>) -> Result<MediaStream, String> {
-    let access = bearer(false)?;
     let url = format!("https://www.googleapis.com/drive/v3/files/{id}?alt=media");
-    let mut request = http_stream().get(url).header("authorization", auth(&access.token));
-    if let Some(range) = range {
-        request = request.header("range", range);
-    }
     log_drive(&format!("stream {id} range {}", range.unwrap_or("-")));
-    let response = request.send().map_err(|error| error.to_string())?;
+    let response = stream_get(&url, range)?;
     let status = response.status().as_u16();
-    log_drive(&format!("stream {id} status {status}"));
-    if !(status == 200 || status == 206) {
-        return Err(format!("drive recusou o áudio ({status})"));
-    }
     let upstream = response
         .headers()
         .get("content-type")
@@ -710,7 +773,7 @@ fn evict(protect: &str) {
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.ends_with(".partial") {
+        if name.ends_with(".partial") || name.ends_with(".head") || name.ends_with(".preview") {
             continue;
         }
         let Ok(meta) = entry.metadata() else {
@@ -866,12 +929,12 @@ fn download_bytes(id: &str, max: usize) -> Result<Vec<u8>, String> {
     Ok(bytes.to_vec())
 }
 
-fn download_to(token: &str, id: &str, dest: &Path, size: u64) -> Result<(), String> {
+fn download_to(_token: &str, id: &str, dest: &Path, size: u64) -> Result<(), String> {
     if size > 400 * 1024 * 1024 {
         return Err("grande demais para sondar".into());
     }
     let url = format!("https://www.googleapis.com/drive/v3/files/{id}?alt=media");
-    let mut response = http_stream().get(url).header("authorization", auth(token)).send().map_err(|error| error.to_string())?;
+    let mut response = stream_get(&url, None)?;
     let mut file = std::fs::File::create(dest).map_err(|error| error.to_string())?;
     std::io::copy(&mut response, &mut file).map_err(|error| error.to_string())?;
     Ok(())

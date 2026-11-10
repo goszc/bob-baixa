@@ -3,6 +3,8 @@ import { invoke, isTauri } from "./api"
 import { nextPaths } from "./discover"
 import { relatedTracks, trackKey, type Track } from "./library"
 import { EQ_BANDS, eqIsFlat } from "./eq"
+import { translate } from "./i18n"
+import { activeLine, lyricClock } from "./lyric-clock"
 import { activeEq, clearSleep, flushHear, getMusic, hear, onAudioPref, rememberPosition, rememberSession, resumeFor, toggleLike, touchRecent } from "./music"
 
 export type RepeatMode = "off" | "all" | "one"
@@ -60,6 +62,7 @@ export interface PlayerState {
   meta: PlayerMeta | null
   playbackKind: PlaybackKind | null
   radio: boolean
+  buffering: boolean
 }
 
 const sampleLyrics: TrackLyrics = {
@@ -119,6 +122,7 @@ function initial(): PlayerState {
     meta: null,
     playbackKind: null,
     radio: false,
+    buffering: false,
   }
 }
 
@@ -208,14 +212,7 @@ export function displayArtist(state: PlayerState = player) {
   return currentTrack(state)?.artist ?? ""
 }
 
-export function activeLine(lines: LyricLine[], position: number) {
-  let found = -1
-  for (let index = 0; index < lines.length; index += 1) {
-    if (lines[index].at <= position + 0.05) found = index
-    else break
-  }
-  return found
-}
+export { activeLine, lyricClock }
 
 export function orderedTracks(state: PlayerState = player) {
   return state.order.map((index) => state.queue[index]).filter((track): track is Track => Boolean(track))
@@ -234,7 +231,10 @@ function buildOrder(length: number, index: number, shuffle: boolean) {
   return [index, ...rest]
 }
 
+let fadeOut: HTMLMediaElement | null = null
+
 function activeElement() {
+  if (fading && fadeOut && !fadeOut.paused) return fadeOut
   if (player.playbackKind === "video") return video
   if (player.playbackKind === "audio") return slotB ? audioAlt : audio
   return null
@@ -267,6 +267,8 @@ function publishMini() {
       playing: player.playing,
       currentTime: player.currentTime,
       duration: player.duration,
+      liked: track ? getMusic().likes.includes(trackKey(track.path)) : false,
+      buffering: player.buffering,
     }),
   )
 }
@@ -389,6 +391,15 @@ function publishSession() {
 }
 
 export function systemControl(action: string) {
+  if (action.startsWith("seek:")) {
+    const value = Number(action.slice(5))
+    if (Number.isFinite(value)) seek(value)
+    return
+  }
+  if (action === "expand") {
+    void invoke("focus_main")
+    return
+  }
   const now = Date.now()
   if (now - controlAt < 300) return
   controlAt = now
@@ -444,7 +455,10 @@ function startLoop() {
   stopLoop()
   const tick = (now: number) => {
     const element = activeElement()
-    if (!element || element.paused) return
+    if (!element || element.paused) {
+      if (player.playing) frame = requestAnimationFrame(tick)
+      return
+    }
     if (now - lastTick > 80) {
       lastTick = now
       const duration = Number.isFinite(element.duration) && element.duration > 0 ? element.duration : player.duration
@@ -467,10 +481,11 @@ function startLoop() {
         }
       }
       const track = currentTrack()
-      if (track && player.playbackKind === "audio") {
+      if (track) {
         const delta = lastListenAt ? now - lastListenAt : 0
         lastListenAt = now
-        hear(track.path, displayTitle(), displayArtist(), delta, Date.now())
+        const album = player.meta?.album || track.album || ""
+        hear(track.path, displayTitle(), displayArtist(), album, delta, Date.now())
         if (element.currentTime > 5) rememberPosition(track.path, element.currentTime)
       }
       maybeCrossfade(element)
@@ -509,14 +524,41 @@ function handleEnded(event?: Event) {
   void load(next)
 }
 
+let retriedPath = ""
+
+function toast(message: string) {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(new CustomEvent("bob-toast", { detail: message }))
+}
+
 function handleError(event: Event) {
   const element = event.currentTarget
   if (!(element instanceof HTMLMediaElement)) return
-  if (element !== activeElement()) return
+  if (element !== activeElement() && element !== fadeOut) return
   if (!element.getAttribute("src")) return
-  stopLoop()
-  setPlayer({ playing: false, error: "failed" })
-  placeVideo()
+  if (element.error?.code === 1) return
+  const track = currentTrack()
+  if (!track) {
+    stopLoop()
+    setPlayer({ playing: false, error: "failed", buffering: false })
+    return
+  }
+  if (retriedPath !== track.path) {
+    retriedPath = track.path
+    toast(translate(localStorage.getItem("bob-baixa-lang") === "en" ? "en" : "pt", "player_retry"))
+    void load(player.index)
+    return
+  }
+  retriedPath = ""
+  const next = following()
+  toast(translate(localStorage.getItem("bob-baixa-lang") === "en" ? "en" : "pt", "player_skipped"))
+  if (next == null) {
+    stopLoop()
+    setPlayer({ playing: false, error: "failed", buffering: false })
+    placeVideo()
+    return
+  }
+  void load(next)
 }
 
 export function attachMedia(
@@ -554,15 +596,23 @@ export function attachMedia(
   const onEnd = (event: Event) => handleEnded(event)
   const onErr = (event: Event) => handleError(event)
   const onMeta = () => pullTime()
+  const onWait = () => setPlayer({ buffering: true })
+  const onReady = () => setPlayer({ buffering: false })
   for (const element of [audio, video]) {
     element.addEventListener("timeupdate", onTime)
     element.addEventListener("ended", onEnd)
     element.addEventListener("error", onErr)
     element.addEventListener("loadedmetadata", onMeta)
+    element.addEventListener("waiting", onWait)
+    element.addEventListener("playing", onReady)
+    element.addEventListener("canplay", onReady)
   }
   if (audioAlt) {
+    audioAlt.addEventListener("timeupdate", onTime)
     audioAlt.addEventListener("ended", onEnd)
     audioAlt.addEventListener("error", onErr)
+    audioAlt.addEventListener("waiting", onWait)
+    audioAlt.addEventListener("playing", onReady)
   }
   placeVideo()
   return () => {
@@ -641,6 +691,7 @@ async function load(index: number, autoplay = true) {
   const mine = ++generation
   fadeToken += 1
   fading = false
+  fadeOut = null
   flushHear(Date.now())
   lastListenAt = 0
   const track = player.queue[index]
@@ -711,6 +762,7 @@ async function load(index: number, autoplay = true) {
     void loadLyrics(mine, track, source.info)
     return
   }
+  if (!isTauri()) element.muted = true
   try {
     await element.play()
   } catch {
@@ -758,6 +810,7 @@ async function beginCrossfade(nextIndex: number, seconds: number) {
     fading = false
     return
   }
+  fadeOut = activeElement()
   const inGain = incoming === audioAlt ? gainB : gainA
   const outGain = incoming === audioAlt ? gainA : gainB
   incoming.src = source.src
@@ -778,23 +831,26 @@ async function beginCrossfade(nextIndex: number, seconds: number) {
   inGain.gain.setValueAtTime(0, now)
   outGain.gain.linearRampToValueAtTime(0, now + seconds)
   inGain.gain.linearRampToValueAtTime(1, now + seconds)
-  slotB = incoming === audioAlt
-  setPlayer({
-    index: nextIndex,
-    error: null,
-    playbackKind: "audio",
-    meta: source.info
-      ? { title: source.info.title, artist: source.info.artist, album: source.info.album, duration: source.info.duration }
-      : player.meta,
-    duration: track.duration ?? 0,
-    currentTime: 0,
-  })
-  touchRecent(track.path)
-  void loadLyrics(++generation, track, source.info)
   window.setTimeout(() => {
     if (token !== fadeToken) return
+    slotB = incoming === audioAlt
+    fadeOut = null
     stop(incoming === audioAlt ? audio : audioAlt)
     fading = false
+    flushHear(Date.now())
+    lastListenAt = 0
+    setPlayer({
+      index: nextIndex,
+      error: null,
+      playbackKind: "audio",
+      meta: source.info
+        ? { title: source.info.title, artist: source.info.artist, album: source.info.album, duration: source.info.duration }
+        : player.meta,
+      duration: incoming.duration || track.duration || 0,
+      currentTime: incoming.currentTime || 0,
+    })
+    touchRecent(track.path)
+    void loadLyrics(++generation, track, source.info)
     applyVolume()
   }, seconds * 1000 + 40)
 }
@@ -924,6 +980,14 @@ export function cycleRepeat() {
 
 export function setPanel(panel: PlayerPanel) {
   setPlayer({ panel })
+}
+
+export function reorderQueue(from: number, to: number) {
+  if (from === to || from < 0 || to < 0 || from >= player.order.length || to >= player.order.length) return
+  const order = player.order.slice()
+  const [item] = order.splice(from, 1)
+  order.splice(to, 0, item)
+  setPlayer({ order })
 }
 
 export function queueTracks(tracks: Track[], where: "next" | "end") {

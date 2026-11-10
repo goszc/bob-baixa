@@ -209,6 +209,16 @@ function say(key: Key, vars?: Record<string, string | number>) {
   toastTimer = window.setTimeout(() => setState({ toast: null }), 2400)
 }
 
+if (typeof window !== "undefined") {
+  window.addEventListener("bob-toast", (event) => {
+    const message = (event as CustomEvent<string>).detail
+    if (typeof message !== "string" || !message.trim()) return
+    setState({ toast: message })
+    window.clearTimeout(toastTimer)
+    toastTimer = window.setTimeout(() => setState({ toast: null }), 3200)
+  })
+}
+
 function nid() {
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 }
@@ -900,7 +910,7 @@ export function openNotes() {
 
 export async function dismissNotes() {
   const ack = getState().whatsNew
-  const version = getState().tools.appVersion || "0.6.1"
+  const version = getState().tools.appVersion || "0.6.2"
   setState((current) => ({
     ...current,
     showNotes: false,

@@ -255,17 +255,27 @@ async fn open_mini(app: tauri::AppHandle) -> Result<(), String> {
     }
     let window = WebviewWindowBuilder::new(&app, "mini", WebviewUrl::App("index.html?mini=1".into()))
         .title("bob baixa")
-        .inner_size(380.0, 156.0)
-        .min_inner_size(320.0, 140.0)
-        .resizable(false)
+        .inner_size(440.0, 92.0)
+        .min_inner_size(320.0, 84.0)
+        .resizable(true)
         .always_on_top(true)
         .decorations(false)
+        .shadow(true)
         .skip_taskbar(false)
         .visible(true)
         .build()
         .map_err(|error| error.to_string())?;
     let _ = window.set_always_on_top(true);
+    #[cfg(target_os = "windows")]
+    {
+        let _ = window_vibrancy::apply_acrylic(&window, Some((18, 18, 20, 190)));
+    }
     Ok(())
+}
+
+#[tauri::command]
+fn focus_main(app: tauri::AppHandle) {
+    runtime::show_main(&app);
 }
 
 #[tauri::command]
@@ -370,6 +380,9 @@ pub fn run() {
             drive::drive_test,
             drive::drive_open,
             drive::drive_tracks,
+            drive::drive_refresh,
+            drive::save_listens,
+            drive::load_listens,
             drive::drive_upload_library,
             drive::drive_push_state,
             drive::drive_pull_state,
@@ -399,6 +412,7 @@ pub fn run() {
             loudness::backfill_gains,
             open_mini,
             close_mini,
+            focus_main,
             discord_presence,
             diagnose::make_diagnostic,
             set_now_playing
