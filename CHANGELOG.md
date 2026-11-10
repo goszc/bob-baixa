@@ -1,5 +1,9 @@
 # changelog
 
+## 0.5.1
+
+- entrar com google abre a url inteira. no windows o `cmd /c start` cortava no `&` e o google dizia que faltava `response_type`
+
 ## 0.5.0
 
 - antes de buscar a letra, o app tenta reconhecer a faixa: impressão digital do acoustid (com a chave que você cola em configurações) e ficha do musicbrainz. a capa oficial vem do cover art archive ou do itunes, e entra no arquivo
