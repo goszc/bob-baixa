@@ -40,6 +40,8 @@ const api = http.createServer((req, res) => {
         { id: "pic", name: "cover.jpg", mimeType: "image/jpeg", size: String(png.length), appProperties: { bobKind: "lyrics", bobMedia: "leaf" } },
         { id: "cover1", name: "cover.jpg", mimeType: "image/jpeg", size: String(png.length), appProperties: { bobKind: "cover", bobMedia: "audio1" } },
         { id: "index1", name: "index.json", mimeType: "application/json", size: "10", appProperties: { bobKind: "index" } },
+        { id: "state1", name: "biblioteca.json", mimeType: "application/json", size: "40", appProperties: { bobKind: "state" } },
+        { id: "coverv", name: "video1.jpg", mimeType: "image/svg+xml", size: "80", appProperties: { bobKind: "cover", bobMedia: "video1" } },
         { id: "gone", name: "broken.mp3", mimeType: "audio/mpeg", size: "10", appProperties: { bobKind: "audio" } },
       ],
     })
@@ -50,6 +52,21 @@ const api = http.createServer((req, res) => {
   const media = url.pathname.match(/^\/drive\/v3\/files\/([^/]+)$/)
   if (media && url.searchParams.get("alt") === "media") {
     const id = media[1]
+    if (id === "state1") {
+      res.writeHead(200, { ...cors(), "content-type": "application/json" })
+      res.end(JSON.stringify({
+        updatedAt: 50,
+        likes: ["drive:audio1", "drive:video1", "drive:hania", "drive:leaf"],
+        playlists: [{ name: "Noite", paths: ["audio1"] }],
+        queue: [],
+      }))
+      return
+    }
+    if (id === "coverv") {
+      res.writeHead(200, { ...cors(), "content-type": "image/svg+xml" })
+      res.end(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#3d6ea8"/></svg>`)
+      return
+    }
     if (id === "index1") {
       res.writeHead(200, { ...cors(), "content-type": "application/json" })
       res.end(JSON.stringify({
@@ -125,7 +142,7 @@ async function exercise(browser, label) {
     localStorage.setItem("bob-exp", String(Date.now() + 3_600_000))
   })
   await page.goto(origin, { waitUntil: "domcontentloaded" })
-  await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).waitFor({ timeout: 20_000 })
+  await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).first().waitFor({ timeout: 20_000 })
   await page.waitForFunction(() => navigator.serviceWorker?.controller)
   if (process.env.SHOT && label === "chromium") await page.screenshot({ path: "/opt/cursor/artifacts/phone-home-pixel.png" })
   await page.locator("#version").click()
@@ -204,7 +221,7 @@ await quiet.addInitScript(() => {
 })
 await quiet.route("https://accounts.google.com/**", (route) => route.abort())
 await quiet.goto(origin, { waitUntil: "domcontentloaded" })
-await quiet.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).waitFor({ timeout: 20_000 })
+await quiet.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).first().waitFor({ timeout: 20_000 })
 assert.equal(await quiet.locator("#gate").isHidden(), true)
 await again.close()
 await chromiumBrowser.close()
@@ -267,7 +284,7 @@ if (process.env.SHOT) {
   })
   await tour.goto(origin, { waitUntil: "domcontentloaded" })
   await tour.waitForTimeout(1200)
-  await tour.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).waitFor({ timeout: 20_000 })
+  await tour.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).first().waitFor({ timeout: 20_000 })
   await tour.screenshot({ path: "/opt/cursor/artifacts/phone-home-iphone.png", ...shot })
   await tour.getByRole("button", { name: "Biblioteca" }).click()
   await tour.screenshot({ path: "/opt/cursor/artifacts/phone-library-iphone.png", ...shot })

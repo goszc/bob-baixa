@@ -59,6 +59,7 @@ export function mergeLibrary(files, index) {
     applyPhoneIndex([...fromFiles, ...extra], index).map((track) => {
       const next = normalizeTrack(track)
       if (images.has(next.lyricsId)) next.lyricsId = ""
+      if (!next.coverId) next.coverId = coverIdFor(next, files)
       return next
     }),
   )
@@ -72,6 +73,7 @@ export function applyPhoneIndex(tracks, index) {
     if (!row) return track
     const coverId = text(row.coverId) || track.coverId
     const lyricsId = safeLyricsId(text(row.lyricsId) || track.lyricsId, coverId)
+    const thumb = remoteImage(row.thumbnail) || remoteImage(row.cover) || remoteImage(track.thumb)
     const lyrics = lyricBody(text(row.lyrics)) || lyricBody(track.lyrics)
     return {
       ...track,
@@ -79,6 +81,7 @@ export function applyPhoneIndex(tracks, index) {
       artist: text(row.artist) || track.artist,
       album: text(row.album) || track.album,
       coverId,
+      thumb,
       lyricsId,
       lyrics,
       mime: text(row.mime) || track.mime,
@@ -134,7 +137,56 @@ export function mergePhoneState(local, remote) {
 
 export function stateFile(files) {
   const list = Array.isArray(files) ? files : []
-  return list.find((file) => file?.appProperties?.bobKind === "state" || file?.name === "state.json") || null
+  return (
+    list.find((file) => file?.name === "biblioteca.json" || file?.name === "state.json") ||
+    list.find((file) => file?.appProperties?.bobKind === "state") ||
+    null
+  )
+}
+
+export function trackIsLiked(likes, track) {
+  const id = text(track?.id).toLowerCase()
+  const name = text(track?.name).toLowerCase()
+  if (!id && !name) return false
+  for (const key of Array.isArray(likes) ? likes : []) {
+    const raw = text(key).toLowerCase()
+    if (!raw) continue
+    if (raw === id || raw === `drive:${id}`) return true
+    const file = raw.split(/[\\/]/).pop()
+    if (file && name && file === name) return true
+  }
+  return false
+}
+
+export function coverPlaceholder(track) {
+  const label = `${text(track?.artist)} ${text(track?.title)}`.trim() || "bob"
+  let hash = 0
+  for (const ch of label) hash = (hash * 33 + ch.charCodeAt(0)) >>> 0
+  const hue = [18, 28, 152, 188, 210, 262, 330, 48][hash % 8]
+  const letter = (text(track?.title) || text(track?.artist) || "•").slice(0, 1).toUpperCase()
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="hsl(${hue} 34% 42%)"/><circle cx="58" cy="20" r="14" fill="#fff" fill-opacity=".22"/><text x="40" y="50" text-anchor="middle" font-family="Georgia,serif" font-size="28" fill="#fff">${letter}</text></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+function coverIdFor(track, files) {
+  const id = text(track?.id)
+  if (!id) return ""
+  const list = Array.isArray(files) ? files : []
+  for (const file of list) {
+    if (!file?.id || file.id === id) continue
+    const meta = file.appProperties || {}
+    const name = String(file.name || "")
+    const image = meta.bobKind === "cover" || String(file.mimeType || "").startsWith("image/")
+    if (!image) continue
+    if (meta.bobMedia === id) return file.id
+    if (name === `${id}.jpg` || name === `${id}.png` || name === `${id}.webp` || name === `${id}.cover.jpg` || name === `${id}.cover.png`) return file.id
+  }
+  return ""
+}
+
+function remoteImage(value) {
+  const raw = text(value)
+  return /^https?:\/\//i.test(raw) || raw.startsWith("data:image/") ? raw : ""
 }
 
 function normalizeState(value) {

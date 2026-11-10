@@ -12,6 +12,8 @@
 - início preenche a largura: continuar ouvindo e mais tocadas da semana
 - descobrir mostra sugestões e o que foi descoberto recentemente
 - baixar fica logo abaixo de descobrir. um campo, mp3 ou mp4 (o mesmo formato de descobrir música), a qualidade no menu e a fila com progresso, cancelar e tentar de novo
+- no celular, as capas vêm de .bob/covers e do índice, com um desenho no lugar de uma caixa vazia. a barra de baixo cabe, e curtidas lê o mesmo arquivo do computador
+- continuar ouvindo fica numa linha só. o player mostra o vídeo no lugar da capa, e a letra em tela cheia deixa a capa ou o vídeo à direita
 - o menu do botão direito abre no cursor, com seis itens. as listas mostram o play ao passar o mouse. o vídeo preenche a área. a letra tem traduzir, sincronizar e um menu
 
 ## 0.6.6

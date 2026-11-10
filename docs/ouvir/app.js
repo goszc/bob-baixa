@@ -1,4 +1,4 @@
-import { DRIVE_SCOPE, activeLyric, choosePlayback, deviceSupport, indexFile, isLyricText, libraryQuery, lyricLines, mergeLibrary, mergePhoneState, stateFile } from "./library.js"
+import { DRIVE_SCOPE, activeLyric, choosePlayback, coverPlaceholder, deviceSupport, indexFile, isLyricText, libraryQuery, lyricLines, mergeLibrary, mergePhoneState, stateFile, trackIsLiked } from "./library.js"
 
 const gate = document.querySelector("#gate")
 const player = document.querySelector("#player")
@@ -22,6 +22,11 @@ const ICONS = {
   shuffle: '<polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/>',
   repeat: '<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
   heart: '<path d="M19 13.5 12 20l-7-6.5a4 4 0 0 1 6-5l1 1 1-1a4 4 0 0 1 6 5z"/>',
+  home: '<path d="M4 11 12 4l8 7"/><path d="M6 10.5V20h12v-9.5"/>',
+  library: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  discover: '<circle cx="12" cy="12" r="8"/><polygon points="14.5,9 10,12 14.5,15"/>',
+  download: '<path d="M12 4v10"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/>',
+  list: '<path d="M9 6h11"/><path d="M9 12h11"/><path d="M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
 }
 
 let tokenClient = null
@@ -71,6 +76,7 @@ function paintIcons() {
   document.querySelector("#shuffle").innerHTML = icon("shuffle")
   document.querySelector("#repeat").innerHTML = icon("repeat")
   document.querySelector("#like").innerHTML = icon("heart")
+  for (const mark of document.querySelectorAll("[data-ico]")) mark.innerHTML = icon(mark.dataset.ico)
   setPlayIcon(true)
 }
 
@@ -191,14 +197,18 @@ function wire() {
       view = button.dataset.view
       for (const item of document.querySelectorAll("[data-view]")) item.removeAttribute("aria-current")
       button.setAttribute("aria-current", "page")
+      const libraryView = view === "library" || view === "playlists"
       document.querySelector("#home").hidden = view !== "home"
-      document.querySelector("#library").hidden = view !== "library"
+      document.querySelector("#library").hidden = !libraryView
       document.querySelector("#likes").hidden = view !== "likes"
       document.querySelector("#discover").hidden = view !== "discover"
       document.querySelector("#download").hidden = view !== "download"
+      if (view === "playlists") segment = "playlists"
+      if (view === "library") segment = "tracks"
+      for (const item of document.querySelectorAll("[data-seg]")) item.setAttribute("aria-selected", item.dataset.seg === segment ? "true" : "false")
       if (view === "home") renderHome()
       else if (view === "likes") renderLikes()
-      else if (view === "library") renderLibrary()
+      else if (libraryView) renderLibrary()
     })
   }
   for (const button of document.querySelectorAll("[data-seg]")) {
@@ -496,7 +506,7 @@ async function openLibrary(retried = false) {
       const body = await response.json()
       found.push(...(body.files || []))
       page = body.nextPageToken || ""
-    } while (page && found.length < 500)
+    } while (page && found.length < 2000)
   } catch {
     setLoading(false)
     showWelcome("não consegui ler o drive.")
@@ -551,10 +561,19 @@ function showHome() {
   renderHome()
 }
 
+function lovedTracks() {
+  return tracks.filter((track) => trackIsLiked([...liked], track))
+}
+
+function paintLikeCount() {
+  const node = document.querySelector("#like-count")
+  if (node) node.textContent = String(lovedTracks().length)
+}
+
 function renderLikes() {
   const box = document.querySelector("#likes")
   box.innerHTML = ""
-  const loved = tracks.filter((track) => liked.has(track.id))
+  const loved = lovedTracks()
   if (!loved.length) {
     const empty = document.createElement("p")
     empty.className = "lead"
@@ -578,8 +597,7 @@ function renderLikes() {
 }
 
 function renderHome() {
-  const likesButton = document.querySelector('[data-view="likes"]')
-  if (likesButton) likesButton.textContent = `Curtidas ${liked.size}`
+  paintLikeCount()
   const home = document.querySelector("#home")
   home.innerHTML = ""
   if (!tracks.length) {
@@ -597,7 +615,7 @@ function renderHome() {
     home.append(sectionLabel("mix do dia"))
     home.append(gridOf(mix.slice(0, 6)))
   }
-  const loved = tracks.filter((track) => liked.has(track.id))
+  const loved = lovedTracks()
   home.append(sectionLabel("curtidas"))
   if (loved.length) home.append(gridOf(loved))
   else home.append(note("curta uma faixa e ela fica aqui."))
@@ -662,7 +680,7 @@ function renderLibrary() {
     return
   }
   const curtidas = document.createElement("li")
-  const loved = tracks.filter((track) => liked.has(track.id))
+  const loved = lovedTracks()
   const button = document.createElement("button")
   button.type = "button"
   button.textContent = `Curtidas · ${loved.length}`
@@ -826,17 +844,44 @@ function names(track) {
 
 function coverImage(track, className) {
   const name = className || "thumb"
-  if (!track.coverId) {
-    const box = document.createElement("span")
-    box.className = name
-    box.setAttribute("aria-hidden", "true")
-    return box
-  }
   const image = document.createElement("img")
+  const fallback = coverPlaceholder(track)
   image.alt = ""
   image.className = name
-  image.src = streamUrl(track.coverId, 0, "image/jpeg")
+  const remote = coverSrc(track)
+  image.src = fallback
+  if (remote) {
+    const probe = new Image()
+    probe.onload = () => {
+      image.src = remote
+    }
+    probe.onerror = () => {
+      void directCover(track).then((url) => {
+        if (url) image.src = url
+      })
+    }
+    probe.src = remote
+  }
   return image
+}
+
+function coverSrc(track) {
+  if (track?.thumb && /^(https?:|data:image\/)/.test(track.thumb)) return track.thumb
+  if (track?.coverId) return streamUrl(track.coverId, 0, "image/jpeg")
+  return ""
+}
+
+async function directCover(track) {
+  if (!track?.coverId || !access) return ""
+  try {
+    const response = await fetch(`${api}/drive/v3/files/${track.coverId}?alt=media`, { headers: { authorization: `Bearer ${access}` } })
+    if (!response.ok) return ""
+    const blob = await response.blob()
+    if (blob.size < 32) return ""
+    return URL.createObjectURL(blob)
+  } catch {
+    return ""
+  }
 }
 
 function plainItem(text) {
@@ -887,8 +932,8 @@ function preview(track) {
   document.querySelector("#artist").textContent = [track.artist, albumOf(track)].filter(Boolean).join(" · ")
   document.querySelector("#mini-title").textContent = track.title || "bob baixa"
   document.querySelector("#mini-artist").textContent = track.artist || ""
-  document.querySelector("#like").setAttribute("aria-pressed", liked.has(track.id) ? "true" : "false")
-  document.querySelector("#like").innerHTML = icon("heart", liked.has(track.id))
+  document.querySelector("#like").setAttribute("aria-pressed", trackIsLiked([...liked], track) ? "true" : "false")
+  document.querySelector("#like").innerHTML = icon("heart", trackIsLiked([...liked], track))
   showCover(track)
   publishSession(track)
 }
@@ -926,12 +971,15 @@ function currentTrack() {
 
 function toggleLike(track) {
   if (!track) return
-  if (liked.has(track.id)) liked.delete(track.id)
-  else liked.add(track.id)
+  if (trackIsLiked([...liked], track)) {
+    liked.delete(track.id)
+    liked.delete(`drive:${track.id}`)
+  } else liked.add(track.id)
   phoneState = { ...phoneState, likes: [...liked], updatedAt: Date.now() }
   localStorage.setItem("bob-phone-state", JSON.stringify(phoneState))
-  document.querySelector("#like").setAttribute("aria-pressed", liked.has(track.id) ? "true" : "false")
-  document.querySelector("#like").innerHTML = icon("heart", liked.has(track.id))
+  document.querySelector("#like").setAttribute("aria-pressed", trackIsLiked([...liked], track) ? "true" : "false")
+  document.querySelector("#like").innerHTML = icon("heart", trackIsLiked([...liked], track))
+  paintLikeCount()
   if (view === "home") renderHome()
   void saveState()
 }
@@ -1008,33 +1056,34 @@ async function blobFallback(media, id) {
 function showCover(track) {
   const mini = document.querySelector("#mini-cover")
   const wash = document.querySelector("#wash-img")
-  if (!track?.coverId || video.hidden === false) {
-    cover.removeAttribute("src")
-    cover.hidden = true
-    if (!track?.coverId) {
-      mini.removeAttribute("src")
-      wash.removeAttribute("src")
+  const fallback = coverPlaceholder(track)
+  const remote = coverSrc(track)
+  const paint = (src) => {
+    const art = src || fallback
+    mini.src = art
+    wash.src = art
+    if (video.hidden === false) {
+      cover.hidden = true
+      return
     }
+    cover.hidden = false
+    cover.src = art
   }
+  paint(remote)
   if (!track?.coverId) return
-  const src = navigator.serviceWorker?.controller ? streamUrl(track.coverId, 0, "image/jpeg") : ""
-  mini.src = src
-  wash.src = src
-  if (video.hidden === false) return
-  cover.hidden = false
-  cover.src = src
-  if (!navigator.serviceWorker?.controller) {
+  const applyBlob = () => {
     fetch(`${api}/drive/v3/files/${track.coverId}?alt=media`, { headers: { authorization: `Bearer ${access}` } })
       .then((response) => (response.ok ? response.blob() : null))
       .then((blob) => {
-        if (!blob) return
-        const local = URL.createObjectURL(blob)
-        cover.src = local
-        mini.src = local
-        wash.src = local
-        cover.hidden = video.hidden === false
+        if (!blob || blob.size < 32) return
+        paint(URL.createObjectURL(blob))
       })
-      .catch(() => {})
+      .catch(() => paint(fallback))
+  }
+  if (!navigator.serviceWorker?.controller) applyBlob()
+  else {
+    cover.onerror = () => applyBlob()
+    mini.onerror = () => applyBlob()
   }
 }
 

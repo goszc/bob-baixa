@@ -99,7 +99,7 @@ export function Home() {
             </button>
           </div>
         ) : (
-          <div className="home-grid mt-4">
+          <div className="home-row mt-4">
             {recent.map((track, index) => (
               <button key={track.path} type="button" className="rounded-2xl bg-soft p-3 text-left" onClick={() => playTracks(recent, index)}>
                 <Thumb src={track.thumbnail} videoUrl={track.pageUrl || track.title} className="aspect-square w-full rounded-xl" />

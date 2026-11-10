@@ -296,7 +296,19 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
   )
 }
 
-function LyricStage({ onClose, onFind, onKaraoke }: { onClose: () => void; onFind: () => void; onKaraoke: () => void }) {
+function LyricStage({
+  onClose,
+  onFind,
+  onKaraoke,
+  showVideo,
+  bindVideo,
+}: {
+  onClose: () => void
+  onFind: () => void
+  onKaraoke: () => void
+  showVideo: boolean
+  bindVideo: (element: HTMLElement | null) => void
+}) {
   const player = usePlayer()
   const app = useApp()
   const t = useT()
@@ -333,10 +345,11 @@ function LyricStage({ onClose, onFind, onKaraoke }: { onClose: () => void; onFin
     }
   }, [])
   return (
-    <div className="absolute inset-0 z-20 overflow-hidden text-white">
+    <div className="absolute inset-0 z-20 flex overflow-hidden text-white">
       <div className="absolute inset-0 bg-[#0c0c0c]" style={{ background: "radial-gradient(980px 560px at 15% 0%, color-mix(in srgb, var(--accent) 58%, transparent), transparent 68%), #0c0c0c" }} />
       {track?.thumbnail ? <img src={track.thumbnail} alt="" className="lyric-wash" /> : <div className="lyric-wash lyric-wash-color" />}
-      <div className={cn("pointer-events-none absolute inset-0 bg-black/35")} />
+      <div className="pointer-events-none absolute inset-0 bg-black/35" />
+      <div className="relative z-[1] flex min-w-0 flex-1 flex-col">
       <div className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-2 px-8 py-5 transition-opacity duration-300", chrome || more ? "opacity-100" : "pointer-events-none opacity-0")}>
         <button type="button" className="rounded-full bg-white/15 px-3 py-1 text-[13px]" onClick={() => track && lines.length && startTranslation(track.path, lines.map((line) => line.text), app.config.translateLang || "pt")}>
           {t("lyrics_translate")}
@@ -361,7 +374,7 @@ function LyricStage({ onClose, onFind, onKaraoke }: { onClose: () => void; onFin
           </button>
         </div>
       ) : null}
-      <div ref={listRef} className="relative z-[1] h-full overflow-auto px-8 pt-28 pb-32 md:px-16">
+      <div ref={listRef} className="relative min-h-0 flex-1 overflow-auto px-8 pt-28 pb-32 md:px-12">
         {lines.map((line, index) => {
           const on = synced && index === current
           return (
@@ -387,6 +400,16 @@ function LyricStage({ onClose, onFind, onKaraoke }: { onClose: () => void; onFin
           <span className="block truncate text-[12px] text-white/70">{track?.artist}</span>
         </span>
       </div>
+      </div>
+      <aside className="relative z-[1] flex w-[min(40%,460px)] shrink-0 items-center p-8">
+        <div className="relative aspect-square w-full overflow-hidden rounded-3xl bg-black/25">
+          {showVideo ? (
+            <div ref={bindVideo} data-fit="fill" className="stage-video absolute inset-0" />
+          ) : (
+            <Thumb src={track?.thumbnail} videoUrl={track?.pageUrl || track?.title} className="absolute inset-0 h-full w-full rounded-none" />
+          )}
+        </div>
+      </aside>
     </div>
   )
 }
@@ -448,7 +471,7 @@ export function Player() {
   const title = displayTitle(player)
   const artist = displayArtist(player)
   const album = player.meta?.album || track?.album || ""
-  const showVideo = player.playbackKind === "video" && !player.error && Boolean(track)
+  const showVideo = Boolean(track) && !player.error && (track?.kind === "video" || player.playbackKind === "video")
   const disabled = !track || player.error !== null
   const loved = track ? liked(track.path) : false
   const repeatLabel =
@@ -514,11 +537,10 @@ export function Player() {
 
   const picture = (
     <>
-      {showVideo ? (
-        <div ref={setVideoSlot} data-fit={videoFit} className="stage-video absolute inset-0 bg-black" />
-      ) : (
-        <Thumb src={track?.thumbnail} videoUrl={track?.pageUrl || track?.title || track?.path} className="absolute inset-0 h-full w-full rounded-none" />
-      )}
+      <Thumb src={track?.thumbnail} videoUrl={track?.pageUrl || track?.title || track?.path} className="absolute inset-0 h-full w-full rounded-none" />
+      {showVideo && !lyricStage ? (
+        <div ref={setVideoSlot} data-fit={videoFit} className="stage-video absolute inset-0" />
+      ) : null}
       {showVideo ? (
         <button type="button" className="absolute right-3 top-3 z-10 rounded-full bg-black/55 px-3 py-1 text-[12px] text-white" onClick={() => setVideoFit((value) => (value === "fill" ? "contain" : "fill"))}>
           {videoFit === "fill" ? t("video_fit") : t("video_fill")}
@@ -869,6 +891,8 @@ export function Player() {
           onClose={() => setLyricStage(false)}
           onFind={() => setFindOpen(true)}
           onKaraoke={() => setKaraoke(true)}
+          showVideo={showVideo}
+          bindVideo={setVideoSlot}
         />
       ) : null}
     </div>

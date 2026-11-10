@@ -263,6 +263,8 @@ function publishMini() {
       title: displayTitle() || track?.title || "",
       artist: displayArtist() || track?.artist || "",
       cover: track?.thumbnail || "",
+      video: player.playbackKind === "video" && !player.error,
+      src: player.playbackKind === "video" ? video?.currentSrc || "" : "",
       line,
       playing: player.playing,
       currentTime: player.currentTime,
@@ -438,7 +440,7 @@ export function placeVideo() {
   if (!video || !park) return
   const host = slot && player.playbackKind === "video" && !player.error ? slot : park
   if (video.parentElement !== host) host.appendChild(video)
-  video.className = "h-full w-full bg-black object-contain"
+  video.className = "h-full w-full object-contain"
 }
 
 export function setVideoSlot(element: HTMLElement | null) {

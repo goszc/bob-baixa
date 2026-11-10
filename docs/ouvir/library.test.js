@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { DRIVE_SCOPE, activeLyric, choosePlayback, isLyricText, libraryFromFiles, libraryQuery, lyricLines, mergeLibrary, mergePhoneState, normalizeTrack } from "./library.js"
+import { DRIVE_SCOPE, activeLyric, choosePlayback, coverPlaceholder, isLyricText, libraryFromFiles, libraryQuery, lyricLines, mergeLibrary, mergePhoneState, normalizeTrack, trackIsLiked } from "./library.js"
 
 test("the phone asks only for files this project created", () => {
   assert.equal(DRIVE_SCOPE, "https://www.googleapis.com/auth/drive.file")
@@ -107,4 +107,23 @@ test("ios uses an m4a of the same song and otherwise explains opus", () => {
   assert.match(blocked.reason, /opus/)
   const video = choosePlayback({ id: "v", name: "clip.mp4", title: "Clipe", artist: "", video: true }, [], { ios: true, opus: false })
   assert.equal(video.element, "video")
+})
+
+test("a cover in .bob/covers is used when the index has no cover id", () => {
+  const merged = mergeLibrary(
+    [
+      { id: "audio-1", name: "keep.opus", mimeType: "audio/ogg", appProperties: { bobKind: "audio" } },
+      { id: "cover-file", name: "audio-1.jpg", mimeType: "image/jpeg", appProperties: { bobKind: "cover", bobMedia: "audio-1" } },
+    ],
+    { tracks: [{ id: "audio-1", title: "I'll Keep Coming", artist: "Low Roar" }] },
+  )
+  assert.equal(merged[0].coverId, "cover-file")
+  assert.match(coverPlaceholder(merged[0]), /^data:image\/svg\+xml/)
+})
+
+test("desktop likes stored as drive paths count on the phone", () => {
+  const track = { id: "audio1", name: "keep.wav", title: "I'll Keep Coming" }
+  assert.equal(trackIsLiked(["drive:audio1"], track), true)
+  assert.equal(trackIsLiked(["C:/Music/keep.wav"], track), true)
+  assert.equal(trackIsLiked(["drive:other"], track), false)
 })
