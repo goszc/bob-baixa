@@ -4,7 +4,13 @@ import { parseManifest } from "./listening"
 import { fileName } from "./format.ts"
 import { trackKey, type Track } from "./library"
 
-export type LibraryView = "tracks" | "artists" | "albums" | "folders" | "playlists" | "likes" | "recent" | "retro"
+export type LibraryView = "tracks" | "artists" | "albums" | "folders" | "playlists" | "likes" | "recent" | "retro" | "mix" | "care"
+export type EqScope = "global" | "track"
+
+export interface EqMemory {
+  preset: string
+  bands: number[]
+}
 export type SleepMode = "off" | "15" | "30" | "45" | "60" | "end"
 
 export interface UserPlaylist {
@@ -33,6 +39,11 @@ interface MusicState {
   sleepUntil: number | null
   session: SessionSnapshot | null
   view: LibraryView
+  updatedAt: number
+  eqPreset: string
+  eqBands: number[]
+  eqScope: EqScope
+  eqByPath: Record<string, EqMemory>
 }
 
 const KEY = "bob-baixa-music"
@@ -48,6 +59,11 @@ const empty = (): MusicState => ({
   sleepUntil: null,
   session: null,
   view: "tracks",
+  updatedAt: 0,
+  eqPreset: "flat",
+  eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  eqScope: "global",
+  eqByPath: {},
 })
 
 function load(): MusicState {
@@ -68,6 +84,11 @@ function load(): MusicState {
       crossfade: parsed.crossfade === 2 || parsed.crossfade === 3 ? parsed.crossfade : 0,
       normalize: Boolean(parsed.normalize),
       view: parsed.view ?? "tracks",
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
+      eqPreset: typeof parsed.eqPreset === "string" ? parsed.eqPreset : "flat",
+      eqBands: Array.isArray(parsed.eqBands) ? parsed.eqBands.map((band) => Number(band) || 0).slice(0, 10) : base.eqBands,
+      eqScope: parsed.eqScope === "track" ? "track" : "global",
+      eqByPath: parsed.eqByPath && typeof parsed.eqByPath === "object" ? parsed.eqByPath : {},
     }
   } catch {
     return empty()
@@ -78,16 +99,23 @@ let state = load()
 const listeners = new Set<() => void>()
 let openListen: ListenEvent | null = null
 let prefHook: (() => void) | null = null
+let syncHook: (() => void) | null = null
+let silentSync = false
 
 function emit() {
   listeners.forEach((listener) => listener())
 }
 
 function persist() {
-  const next = { ...state, events: state.events.slice(-4000) }
+  const next = {
+    ...state,
+    events: state.events.slice(-4000),
+    updatedAt: silentSync ? state.updatedAt : Date.now(),
+  }
   state = next
   if (typeof localStorage !== "undefined") localStorage.setItem(KEY, JSON.stringify(next))
   emit()
+  if (!silentSync) syncHook?.()
 }
 
 export function getMusic() {
@@ -107,6 +135,65 @@ export function useMusic() {
 
 export function onAudioPref(listener: () => void) {
   prefHook = listener
+}
+
+export function onLibrarySync(listener: () => void) {
+  syncHook = listener
+  return () => {
+    if (syncHook === listener) syncHook = null
+  }
+}
+
+export function activeEq(path?: string) {
+  if (state.eqScope === "track" && path) {
+    const saved = state.eqByPath[trackKey(path)]
+    if (saved) return saved
+  }
+  return { preset: state.eqPreset, bands: state.eqBands }
+}
+
+export function setEq(preset: string, bands: number[], scope: EqScope, path?: string) {
+  if (scope === "track" && path) {
+    state = {
+      ...state,
+      eqScope: "track",
+      eqByPath: { ...state.eqByPath, [trackKey(path)]: { preset, bands } },
+    }
+  } else {
+    state = { ...state, eqScope: scope, eqPreset: preset, eqBands: bands }
+  }
+  persist()
+  prefHook?.()
+}
+
+export function librarySnapshot() {
+  return {
+    updatedAt: state.updatedAt,
+    playlists: state.playlists,
+    likes: state.likes,
+    events: state.events,
+    recent: state.recent,
+  }
+}
+
+export function applyLibrarySnapshot(raw: string) {
+  try {
+    const parsed = JSON.parse(raw) as Partial<MusicState> & { updatedAt?: number }
+    if (!parsed || typeof parsed !== "object") return
+    silentSync = true
+    state = {
+      ...state,
+      updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : state.updatedAt,
+      playlists: Array.isArray(parsed.playlists) ? parsed.playlists : state.playlists,
+      likes: Array.isArray(parsed.likes) ? parsed.likes : state.likes,
+      events: Array.isArray(parsed.events) ? parsed.events.slice(-4000) : state.events,
+      recent: Array.isArray(parsed.recent) ? parsed.recent : state.recent,
+    }
+    persist()
+    silentSync = false
+  } catch {
+    silentSync = false
+  }
 }
 
 export function setView(view: LibraryView) {

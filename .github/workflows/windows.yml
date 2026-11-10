@@ -23,6 +23,9 @@ jobs:
       - name: npm
         run: npm ci
       - name: build the windows exe
+        env:
+          BOB_GOOGLE_CLIENT_ID: ${{ secrets.BOB_GOOGLE_CLIENT_ID }}
+          BOB_GOOGLE_CLIENT_SECRET: ${{ secrets.BOB_GOOGLE_CLIENT_SECRET }}
         run: npm run tauri build -- --no-bundle
       - name: installer
         working-directory: packaging

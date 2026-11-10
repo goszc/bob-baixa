@@ -3,8 +3,10 @@ import { Segmented } from "../components/segmented"
 import { IconNext, IconPause, IconPlay, IconPrev, IconRepeat, IconShuffle, IconVolume } from "../components/player-icons"
 import { Scrubber } from "../components/scrubber"
 import { Thumb } from "../components/thumb"
+import { Equalizer } from "../components/equalizer"
 import { LibraryPanel } from "../components/library-panel"
-import { isTauri } from "../lib/api"
+import { FindLyrics, Karaoke } from "../components/lyrics-tools"
+import { invoke, isTauri } from "../lib/api"
 import { catalogTracks, refreshCatalog, useCatalog, useCatalogSettled } from "../lib/catalog"
 import { formatClock } from "../lib/format"
 import type { Key } from "../lib/i18n"
@@ -19,6 +21,7 @@ import {
   orderedTracks,
   playNext,
   playPrevious,
+  reloadLyrics,
   playOrderSlot,
   restoreSession,
   syncQueue,
@@ -104,10 +107,13 @@ function TrackButton({ track, active, playing, onClick }: { track: Track; active
   )
 }
 
-function Lyrics({ time }: { time: number }) {
+function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void; onKaraoke: () => void }) {
   const player = usePlayer()
+  const app = useApp()
   const t = useT()
   const listRef = useRef<HTMLDivElement>(null)
+  const [translated, setTranslated] = useState<string[] | null>(null)
+  const [translateNote, setTranslateNote] = useState("")
   const lyrics = player.lyrics
   const synced = Boolean(lyrics?.synced)
   const current = synced && lyrics ? activeLine(lyrics.lines, time) : -1
@@ -120,24 +126,40 @@ function Lyrics({ time }: { time: number }) {
     list.scrollTo({ top: top - list.clientHeight / 2 + node.clientHeight / 2, behavior: "smooth" })
   }, [current])
 
-  if (player.lyricsState === "loading") {
-    return <p className="px-3 py-10 text-[14px] text-muted">{t("lyrics_loading")}</p>
+  const source = lyrics ? SOURCE_KEY[lyrics.source] : undefined
+  const lines = lyrics?.lines ?? []
+  const translate = () => {
+    if (!lines.length || !isTauri()) {
+      setTranslateNote(t("lyrics_translate_fail"))
+      return
+    }
+    setTranslateNote("")
+    void invoke<string[]>("translate_lines", { lines: lines.map((line) => line.text), target: app.config.translateLang || "pt" })
+      .then((next) => setTranslated(next))
+      .catch(() => setTranslateNote(t("lyrics_translate_fail")))
   }
-  if (player.error) {
-    return <p className="px-3 py-10 text-[14px] text-danger">{t(player.error === "missing" ? "player_missing" : "player_failed")}</p>
-  }
-  if (!lyrics || lyrics.instrumental) {
-    return <p className="px-3 py-10 text-[14px] text-muted">{t(lyrics?.instrumental ? "lyrics_instrumental" : "lyrics_empty")}</p>
-  }
-  if (!lyrics.lines.length) {
-    return <p className="px-3 py-10 text-[14px] text-muted">{t("lyrics_empty")}</p>
-  }
-  const source = SOURCE_KEY[lyrics.source]
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-2 flex flex-wrap gap-2 px-1">
+        <button type="button" className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink" onClick={onFind}>
+          {t("lyrics_find")}
+        </button>
+        <button type="button" className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink" onClick={translate}>
+          {t("lyrics_translate")}
+        </button>
+        <button type="button" className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink" onClick={onKaraoke} disabled={!lines.length}>
+          {t("lyrics_karaoke")}
+        </button>
+      </div>
+      {player.lyricsState === "loading" ? <p className="px-3 py-10 text-[14px] text-muted">{t("lyrics_loading")}</p> : null}
+      {player.error ? <p className="px-3 py-10 text-[14px] text-danger">{t(player.error === "missing" ? "player_missing" : "player_failed")}</p> : null}
+      {!player.error && player.lyricsState !== "loading" && (!lyrics || lyrics.instrumental || !lines.length) ? (
+        <p className="px-3 py-6 text-[14px] text-muted">{t(lyrics?.instrumental ? "lyrics_instrumental" : "lyrics_empty")}</p>
+      ) : null}
       {source ? <p className="px-3 pb-2 text-[12px] text-muted">{t(source)}</p> : null}
+      {translateNote ? <p className="px-3 pb-2 text-[12px] text-muted">{translateNote}</p> : null}
       <div ref={listRef} className="relative min-h-0 flex-1 space-y-1 overflow-auto pb-6">
-        {lyrics.lines.map((line, index) => {
+        {lines.map((line, index) => {
           const on = synced && index === current
           return (
             <button
@@ -152,7 +174,8 @@ function Lyrics({ time }: { time: number }) {
                 on ? "bg-soft font-medium text-ink" : "text-muted hover:text-ink",
               )}
             >
-              {line.text}
+              <span>{line.text}</span>
+              {translated?.[index] ? <span className="mt-1 block text-[13px] text-muted">{translated[index]}</span> : null}
             </button>
           )
         })}
@@ -166,6 +189,9 @@ export function Player() {
   const player = usePlayer()
   const t = useT()
   const [query, setQuery] = useState("")
+  const [eqOpen, setEqOpen] = useState(false)
+  const [findOpen, setFindOpen] = useState(false)
+  const [karaoke, setKaraoke] = useState(false)
   const disk = useCatalog()
   const settled = useCatalogSettled()
   const library = useMemo(
@@ -259,6 +285,9 @@ export function Player() {
                 onChange={setVolume}
               />
             </div>
+            <button type="button" className="text-[12px] text-muted hover:text-ink" onClick={() => setEqOpen(true)}>
+              {t("eq_title")}
+            </button>
           </div>
         </div>
       </section>
@@ -274,7 +303,7 @@ export function Player() {
         />
         {player.panel === "lyrics" ? (
           <div className="mt-4 flex min-h-0 flex-1 flex-col">
-            <Lyrics time={player.currentTime} />
+            <Lyrics time={player.currentTime} onFind={() => setFindOpen(true)} onKaraoke={() => setKaraoke(true)} />
           </div>
         ) : (
           <div className="mt-4 flex min-h-0 flex-1 flex-col">
@@ -310,6 +339,21 @@ export function Player() {
           </div>
         )}
       </aside>
+      {eqOpen ? <Equalizer path={track?.path} onClose={() => setEqOpen(false)} /> : null}
+      {findOpen && track ? (
+        <FindLyrics
+          path={track.path}
+          title={title}
+          artist={artist}
+          duration={player.duration || track.duration}
+          onClose={() => setFindOpen(false)}
+          onPinned={() => {
+            reloadLyrics()
+            setFindOpen(false)
+          }}
+        />
+      ) : null}
+      {karaoke && player.lyrics ? <Karaoke lyrics={player.lyrics} time={player.currentTime} onClose={() => setKaraoke(false)} /> : null}
     </div>
   )
 }

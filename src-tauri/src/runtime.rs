@@ -137,6 +137,7 @@ pub fn boot(app: AppHandle) {
         let app_clip = app.clone();
         tauri::async_runtime::spawn(async move { clipboard_loop(app_clip).await });
         start_http(app.clone());
+        crate::drive::boot(app.clone());
         register_hotkey(&app);
         setup_tray(&app);
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -164,11 +165,7 @@ async fn prepare(app: &AppHandle) {
     }
     inner.whats_new = config_existed && inner.config.seen_version != APP_VERSION;
     if let Some(mut jobs) = read_json::<Vec<Job>>(&data_dir.join("jobs.json")) {
-        for job in &mut jobs {
-            if job.state == "downloading" {
-                job.state = "paused".into();
-            }
-        }
+        bob_core::resume_interrupted(&mut jobs);
         inner.jobs = jobs;
     }
     if let Some(history) = read_json::<Vec<HistoryEntry>>(&data_dir.join("history.json")) {
@@ -238,22 +235,15 @@ pub async fn set_config(app: &AppHandle, mut config: Config) -> Result<(), Strin
     crate::shell_menu::sync(config.context_menu, &config.language)?;
     {
         let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
-        let hotkey_changed = inner.config.hotkey != config.hotkey;
         inner.config = config;
         save(&inner);
-        let enabled = inner.config.hotkey;
+        let hotkeys = hotkey_bindings(&inner.config);
         let minimize = inner.config.minimize_to_tray;
         drop(inner);
         app.state::<AppState>()
             .minimize_to_tray
             .store(minimize, Ordering::Relaxed);
-        if hotkey_changed {
-            if enabled {
-                register_hotkey(app);
-            } else {
-                unregister_hotkey(app);
-            }
-        }
+        sync_hotkeys(app, &hotkeys);
     }
     pump(app).await;
     Ok(())
@@ -1239,6 +1229,28 @@ async fn fail_download(app: &AppHandle, id: &str, tail: &str) {
         return;
     }
     let can_retry = !retried && (preference == "auto" || preference.is_empty());
+    if bob_core::is_transient_download_error(tail) {
+        let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        let secs = if let Some(job) = inner.jobs.iter_mut().find(|job| job.id == id) {
+            let secs = bob_core::apply_transient_retry(job);
+            job.warning = Some(text(
+                &language,
+                &format!("sem rede ou o youtube pediu espera. nova tentativa em {secs}s."),
+                &format!("offline or rate limited. retrying in {secs}s."),
+            ));
+            secs
+        } else {
+            0
+        };
+        if secs > 0 {
+            save(&inner);
+            let jobs = inner.jobs.clone();
+            drop(inner);
+            emit(app, &BobEvent::Jobs { jobs });
+            schedule_pump(app);
+            return;
+        }
+    }
     if can_retry && looks_like_auth(tail) {
         if let Some(browser) = pick_browser("auto", &detect_browsers()) {
             let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
@@ -1455,6 +1467,27 @@ async fn finish(
     }
     if let Some(body) = notify_body {
         notify(app, &body);
+    }
+    if state == "done" {
+        if let Some(path) = path.clone() {
+            let url = {
+                app.state::<AppState>()
+                    .inner
+                    .clone()
+                    .lock_owned()
+                    .await
+                    .jobs
+                    .iter()
+                    .find(|job| job.id == id)
+                    .map(|job| (job.url.clone(), job.title.clone(), job.audio_only))
+            };
+            if let Some((url, title, audio_only)) = url {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::enrich::after_download(&app, &path, &url, &title, audio_only).await;
+                });
+            }
+        }
     }
     schedule_pump(app);
 }
@@ -1843,6 +1876,24 @@ fn start_http(app: AppHandle) {
         for mut request in server.incoming_requests() {
             let method = request.method().as_str().to_string();
             let url = request.url().to_string();
+            if method == "GET" && url.starts_with("/drive/") {
+                let id = url.trim_start_matches("/drive/");
+                let range = request.headers().iter().find_map(|header| {
+                    header
+                        .field
+                        .equiv("Range")
+                        .then(|| header.value.as_str().to_string())
+                });
+                let (status, headers, bytes) = crate::drive::proxy(id, range.as_deref());
+                let mut response = tiny_http::Response::from_data(bytes).with_status_code(tiny_http::StatusCode(status));
+                for (name, value) in headers {
+                    if let Ok(header) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+                        response.add_header(header);
+                    }
+                }
+                let _ = request.respond(response);
+                continue;
+            }
             let mut body = String::new();
             {
                 use std::io::Read;
@@ -1892,16 +1943,81 @@ fn start_http(app: AppHandle) {
     });
 }
 
-fn register_hotkey(app: &AppHandle) {
-    use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-    let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyB);
-    let _ = app.global_shortcut().register(shortcut);
+fn hotkey_bindings(config: &Config) -> Vec<(String, String)> {
+    let mut bindings = Vec::new();
+    if config.hotkey {
+        bindings.push(("ctrl+shift+b".into(), "paste".into()));
+    }
+    for (shortcut, action) in [
+        (config.hotkey_play.as_str(), "toggle"),
+        (config.hotkey_next.as_str(), "next"),
+        (config.hotkey_prev.as_str(), "previous"),
+        (config.hotkey_like.as_str(), "like"),
+    ] {
+        let shortcut = shortcut.trim();
+        if !shortcut.is_empty() {
+            bindings.push((shortcut.to_string(), action.to_string()));
+        }
+    }
+    bindings
 }
 
-fn unregister_hotkey(app: &AppHandle) {
-    use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
-    let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyB);
-    let _ = app.global_shortcut().unregister(shortcut);
+fn normalize_shortcut(value: &str) -> String {
+    value
+        .split('+')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+fn shortcut_map() -> &'static std::sync::Mutex<Vec<(String, String)>> {
+    static MAP: std::sync::OnceLock<std::sync::Mutex<Vec<(String, String)>>> = std::sync::OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn register_hotkey(app: &AppHandle) {
+    let bindings = app
+        .state::<AppState>()
+        .inner
+        .try_lock()
+        .map(|inner| hotkey_bindings(&inner.config))
+        .unwrap_or_default();
+    sync_hotkeys(app, &bindings);
+}
+
+fn sync_hotkeys(app: &AppHandle, bindings: &[(String, String)]) {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+    let mut known = shortcut_map().lock().unwrap_or_else(|error| error.into_inner());
+    for (shortcut, _) in known.iter() {
+        if let Ok(parsed) = shortcut.parse::<Shortcut>() {
+            let _ = app.global_shortcut().unregister(parsed);
+        }
+    }
+    known.clear();
+    for (shortcut, action) in bindings {
+        let Ok(parsed) = shortcut.parse::<Shortcut>() else {
+            continue;
+        };
+        if app.global_shortcut().register(parsed.clone()).is_ok() {
+            known.push((normalize_shortcut(&parsed.to_string()), action.clone()));
+        }
+    }
+}
+
+pub fn on_global_shortcut(app: &AppHandle, shortcut: &str) {
+    let key = normalize_shortcut(shortcut);
+    let action = shortcut_map()
+        .lock()
+        .ok()
+        .and_then(|map| map.iter().find(|(shortcut, _)| shortcut == &key).map(|(_, action)| action.clone()));
+    match action.as_deref() {
+        Some("paste") => hotkey(app),
+        Some(action) => {
+            let _ = app.emit("player-hotkey", action.to_string());
+        }
+        None => {}
+    }
 }
 
 fn setup_tray(app: &AppHandle) {

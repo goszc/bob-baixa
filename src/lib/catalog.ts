@@ -16,6 +16,7 @@ export interface DiskFile {
 }
 
 let disk: DiskFile[] | null = null
+let remoteTracks: Track[] = []
 let settled = false
 let removed = new Set<string>()
 const listeners = new Set<() => void>()
@@ -72,6 +73,23 @@ export async function refreshCatalog(dir?: string, liveDir?: () => string) {
     if (mine !== request) return
     if (liveDir && trackKey(liveDir()) !== trackKey(outputDir)) return
     disk = files
+    try {
+      const drive = await invoke<Array<{ id: string; path: string; title: string; artist: string; album: string; duration?: number | null; kind: string; size: number }>>("drive_tracks")
+      remoteTracks = drive.map((file) => ({
+        id: file.id,
+        path: file.path,
+        title: file.title || file.path,
+        artist: file.artist || "",
+        album: file.album || "",
+        folder: "drive",
+        pageUrl: "",
+        duration: file.duration ?? undefined,
+        kind: file.kind === "video" ? "video" : "audio",
+        size: file.size,
+      }))
+    } catch {
+      remoteTracks = []
+    }
     settled = true
     emit()
   } catch {
@@ -108,7 +126,9 @@ export function catalogTracks(jobs: Job[], history: HistoryEntry[], convert: Con
       size: file.size,
     })
   }
-  return dedupeTracks(scanned)
+  const present = new Set(scanned.map((track) => trackKey(track.path)))
+  const extra = remoteTracks.filter((track) => !present.has(trackKey(track.path)) && !hidden.has(trackKey(track.path)))
+  return dedupeTracks([...scanned, ...extra])
 }
 
 function withPlace(track: Track, outputDir: string): Track {

@@ -1,13 +1,25 @@
+mod health;
+mod identify;
 mod library;
 mod lyrics;
+mod matching;
 mod media;
 mod model;
 mod notes;
 mod parse;
+mod pkce;
+mod queue;
+mod tags;
 
+pub use health::*;
+pub use identify::*;
 pub use library::*;
 pub use lyrics::*;
+pub use matching::*;
 pub use media::*;
 pub use model::*;
 pub use notes::*;
 pub use parse::*;
+pub use pkce::*;
+pub use queue::*;
+pub use tags::*;

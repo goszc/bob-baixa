@@ -75,7 +75,8 @@ export function collectTracks(jobs: Job[], history: HistoryEntry[], convert: Con
   const seen = new Set<string>()
   const tracks: Track[] = []
   const add = (track: Track) => {
-    if (!track.path || !isMediaPath(track.path) || !isInsideLibrary(track.path, outputDir)) return
+    const remote = track.path.startsWith("drive:")
+    if (!track.path || (!remote && (!isMediaPath(track.path) || !isInsideLibrary(track.path, outputDir)))) return
     const key = norm(track.path)
     if (seen.has(key)) return
     seen.add(key)

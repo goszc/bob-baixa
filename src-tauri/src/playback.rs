@@ -2,10 +2,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bob_core::{
-    hit_from_lrclib, is_playable_media, karalyr_get_url, karalyr_search_url, lrcmux_get_url,
+    best_lrclib, hit_from_lrclib, is_playable_media, karalyr_get_url, karalyr_search_url, lrcmux_get_url,
     lrclib_get_url, lrclib_search_url, lyrics_cache_key, lyrics_from_cache, lyrics_ovh_url,
     lyrics_query, media_kind, parse_lrclib_payload, parse_lrcmux_payload, parse_lyrics_ovh,
-    pick_lrclib, read_embedded, read_lyrics_cache, read_sibling_lrc, remote_hit_is_useful,
+    read_embedded, read_lyrics_cache, read_sibling_lrc, remote_hit_is_useful,
     resolve_lyrics, write_lyrics_cache, LrclibQuery, LyricInputs, LyricsCacheEntry, RemoteHit,
     ResolvedLyrics,
 };
@@ -29,6 +29,17 @@ pub struct MediaInspect {
 /// Inspect a file that was already downloaded. Nothing here talks to YouTube.
 #[tauri::command]
 pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaInspect, String> {
+    if let Some(id) = path.strip_prefix("drive:") {
+        return Ok(MediaInspect {
+            exists: true,
+            kind: "audio".into(),
+            title: String::new(),
+            artist: String::new(),
+            album: String::new(),
+            duration: None,
+            src: format!("http://127.0.0.1:47821/drive/{id}"),
+        });
+    }
     let file = PathBuf::from(&path);
     let exists = file.is_file() && is_playable_media(&file);
     if !exists {
@@ -95,7 +106,18 @@ pub async fn load_lyrics(
     if local.source != "none" {
         return Ok(local);
     }
-    let query = lyrics_query(&embedded, &title, &artist, duration);
+    let mut query = lyrics_query(&embedded, &title, &artist, duration);
+    if let Some(identity) = crate::enrich::identify_track(&app, &file, &query.track_name, &query.artist_name, false).await {
+        if !identity.title.trim().is_empty() {
+            query.track_name = identity.title;
+        }
+        if !identity.artist.trim().is_empty() {
+            query.artist_name = identity.artist;
+        }
+        if !identity.album.is_empty() {
+            query.album_name = identity.album;
+        }
+    }
     if query.track_name.trim().is_empty() {
         return Ok(ResolvedLyrics::empty());
     }
@@ -109,7 +131,24 @@ pub async fn load_lyrics(
         Some(client) => client,
         None => return Ok(ResolvedLyrics::empty()),
     };
-    let chain = fetch_remote_chain(&client, &query).await;
+    let variants = bob_core::lyrics_variants(&query);
+    let mut chain = Chain::Miss;
+    for (index, variant) in variants.iter().take(6).enumerate() {
+        let step = if index == 0 {
+            fetch_remote_chain(&client, variant).await
+        } else {
+            fetch_fallback(&client, variant).await
+        };
+        match step {
+            Chain::Hit(hit) if remote_hit_is_useful(&hit) => {
+                chain = Chain::Hit(hit);
+                break;
+            }
+            Chain::Offline if matches!(chain, Chain::Miss) => chain = Chain::Offline,
+            Chain::Miss | Chain::Hit(_) => chain = Chain::Miss,
+            Chain::Offline => {}
+        }
+    }
     let entry = match chain {
         Chain::Hit(hit) => LyricsCacheEntry {
             fetched_at: now,
@@ -193,6 +232,21 @@ async fn fetch_remote_chain(client: &reqwest::Client, query: &LrclibQuery) -> Ch
     }
 }
 
+async fn fetch_fallback(client: &reqwest::Client, query: &LrclibQuery) -> Chain {
+    let shaped = fetch_shaped(client, query, "lrclib", &lrclib_get_url(query), &lrclib_search_url(query)).await;
+    if let Chain::Hit(hit) = &shaped {
+        if remote_hit_is_useful(hit) {
+            return shaped;
+        }
+    }
+    match fetch_ovh(client, query).await {
+        Chain::Hit(hit) if remote_hit_is_useful(&hit) => Chain::Hit(hit),
+        Chain::Miss | Chain::Hit(_) => Chain::Miss,
+        Chain::Offline if matches!(shaped, Chain::Miss) => Chain::Miss,
+        Chain::Offline => Chain::Offline,
+    }
+}
+
 async fn fetch_lrcmux(client: &reqwest::Client, query: &LrclibQuery) -> Chain {
     if query.artist_name.trim().is_empty() || query.track_name.trim().is_empty() {
         return Chain::Miss;
@@ -224,7 +278,7 @@ async fn fetch_shaped(
             Fetch::Body(body) => tracks = parse_lrclib_payload(&body),
         }
     }
-    if let Some(track) = pick_lrclib(&tracks, query.duration) {
+    if let Some(track) = best_lrclib(&tracks, query) {
         let hit = hit_from_lrclib(track, source);
         if remote_hit_is_useful(&hit) {
             return Chain::Hit(hit);
@@ -258,6 +312,65 @@ async fn fetch_ovh(client: &reqwest::Client, query: &LrclibQuery) -> Chain {
 enum Fetch {
     Body(String),
     Offline,
+}
+
+#[tauri::command]
+pub async fn search_lyrics(
+    title: String,
+    artist: String,
+    album: String,
+    duration: Option<f64>,
+) -> Result<Vec<crate::enrich::LyricChoice>, String> {
+    let client = lyrics_client().ok_or_else(|| "sem rede".to_string())?;
+    let variants = crate::enrich::variants_for(&title, &artist, &album, duration);
+    let mut choices = Vec::new();
+    for variant in variants.into_iter().take(4) {
+        let url = lrclib_search_url(&variant);
+        if let Fetch::Body(body) = fetch_body(&client, &url).await {
+            for track in parse_lrclib_payload(&body) {
+                let score = bob_core::score_lrclib(&variant, &track);
+                if score < bob_core::LYRIC_LIST {
+                    continue;
+                }
+                let lrc = track.synced.clone().or(track.plain.clone()).unwrap_or_default();
+                if lrc.trim().is_empty() && !track.instrumental {
+                    continue;
+                }
+                choices.push(crate::enrich::LyricChoice {
+                    source: "lrclib".into(),
+                    title: track.track_name.clone(),
+                    artist: track.artist_name.clone(),
+                    album: track.album_name.clone(),
+                    duration: track.duration,
+                    score,
+                    synced: track.synced.as_ref().map(|text| text.contains('[')).unwrap_or(false),
+                    preview: bob_core::lyric_preview(&lrc, 4),
+                    lrc,
+                });
+            }
+        }
+        if let Fetch::Body(body) = fetch_body(&client, &lrcmux_get_url(&variant)).await {
+            if let Some(hit) = parse_lrcmux_payload(&body) {
+                if remote_hit_is_useful(&hit) {
+                    let lrc = hit.synced.clone().or(hit.plain.clone()).unwrap_or_default();
+                    choices.push(crate::enrich::LyricChoice {
+                        source: "lrcmux".into(),
+                        title: variant.track_name.clone(),
+                        artist: variant.artist_name.clone(),
+                        album: variant.album_name.clone(),
+                        duration: variant.duration,
+                        score: 70,
+                        synced: hit.synced.is_some(),
+                        preview: bob_core::lyric_preview(&lrc, 4),
+                        lrc,
+                    });
+                }
+            }
+        }
+    }
+    choices.sort_by(|left, right| right.score.cmp(&left.score));
+    choices.truncate(12);
+    Ok(choices)
 }
 
 #[tauri::command]
