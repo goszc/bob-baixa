@@ -990,6 +990,54 @@ pub fn offline_copy(id: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+pub fn phone_index_body() -> String {
+    phone_index_json(&load_library())
+}
+
+pub fn remember_cover_id(id: &str, cover_id: &str) {
+    let Some(mut record) = find_record(id) else { return };
+    record.cover_id = cover_id.to_string();
+    upsert(record);
+}
+
+pub fn records_missing_covers() -> Vec<(String, PathBuf, String)> {
+    load_library()
+        .into_iter()
+        .filter(|record| record.cover_id.is_empty())
+        .filter_map(|record| {
+            let path = cover_file(&record.id)?;
+            let mime = if record.cover_mime.is_empty() { "image/jpeg".to_string() } else { record.cover_mime };
+            Some((record.id, path, mime))
+        })
+        .take(30)
+        .collect()
+}
+
+fn phone_index_json(records: &[LibraryRecord]) -> String {
+    let tracks: Vec<serde_json::Value> = records
+        .iter()
+        .filter(|record| !record.id.is_empty() && record.kind != "lyrics" && record.kind != "cover")
+        .take(400)
+        .map(|record| {
+            serde_json::json!({
+                "id": record.id,
+                "name": record.name,
+                "title": record.title,
+                "artist": record.artist,
+                "album": record.album,
+                "duration": record.duration.unwrap_or(0.0),
+                "kind": if record.kind == "video" { "video" } else { "audio" },
+                "mime": record.mime,
+                "size": record.size,
+                "coverId": record.cover_id,
+                "lyricsId": record.lyrics_id,
+                "lyrics": record.lyrics.chars().take(12_000).collect::<String>(),
+            })
+        })
+        .collect();
+    serde_json::json!({ "version": 1, "tracks": tracks }).to_string()
+}
+
 pub fn ids() -> Vec<String> {
     load_library().into_iter().map(|record| record.id).collect()
 }
@@ -1022,4 +1070,35 @@ fn safe_id(id: &str) -> Result<String, String> {
 
 fn urlencoding(value: &str) -> String {
     bob_core::percent_encode(value)
+}
+
+#[cfg(test)]
+mod phone_index {
+    use super::*;
+
+    #[test]
+    fn the_phone_index_keeps_cover_and_synced_lyrics() {
+        let record = LibraryRecord {
+            id: "file-1".into(),
+            name: "Low Roar.opus".into(),
+            kind: "audio".into(),
+            mime: "audio/ogg".into(),
+            title: "I'll Keep Coming".into(),
+            artist: "Low Roar".into(),
+            album: String::new(),
+            duration: Some(180.0),
+            lyrics: "[00:12.00]I'll keep coming".into(),
+            lyrics_id: String::new(),
+            cover_id: "cover-1".into(),
+            cover_mime: "image/jpeg".into(),
+            size: 4_000_000,
+            parent: String::new(),
+            probed: true,
+        };
+        let json = phone_index_json(&[record]);
+        assert!(json.contains("I'll Keep Coming"));
+        assert!(json.contains("cover-1"));
+        assert!(json.contains("[00:12.00]I'll keep coming"));
+        assert!(json.contains("\"version\":1"));
+    }
 }
