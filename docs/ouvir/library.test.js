@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { DRIVE_SCOPE, activeLyric, choosePlayback, libraryFromFiles, libraryQuery, lyricLines, mergeLibrary, mergePhoneState } from "./library.js"
+import { DRIVE_SCOPE, activeLyric, choosePlayback, isLyricText, libraryFromFiles, libraryQuery, lyricLines, mergeLibrary, mergePhoneState, normalizeTrack } from "./library.js"
 
 test("the phone asks only for files this project created", () => {
   assert.equal(DRIVE_SCOPE, "https://www.googleapis.com/auth/drive.file")
@@ -61,6 +61,39 @@ test("likes and playlists merge without dropping either side", () => {
   assert.deepEqual(merged.likes.sort(), ["a", "b"])
   assert.deepEqual(merged.playlists[0].paths.sort(), ["a", "b"])
   assert.deepEqual(merged.queue, ["b"])
+})
+
+test("uploader titles become artist and title, and a jpeg is never lyrics", () => {
+  const merged = mergeLibrary(
+    [
+      { id: "hania", name: "Gondwana Records — Hania Rani — 'Leaving' (Official Video) [Gondwana Records].mp4", mimeType: "video/mp4", appProperties: { bobKind: "video" } },
+      { id: "leaf", name: "Sub Pop — The Album Leaf - The Outer Banks [OFFICIAL VIDEO].mp4", mimeType: "video/mp4", appProperties: { bobKind: "video" } },
+      { id: "caps", name: "DISAPPEARED COMPLETELY — Disappeared Completley - Once In a While (short mood video).mp3", mimeType: "audio/mpeg", appProperties: { bobKind: "audio" } },
+      { id: "a", name: 'Low Roar - "I\'ll Keep Coming".opus', mimeType: "audio/ogg", appProperties: { bobKind: "audio" } },
+      { id: "b", name: 'Low Roar - "I\'ll Keep Coming".mp3', mimeType: "audio/mpeg", appProperties: { bobKind: "audio" } },
+      { id: "pic", name: "cover.jpg", mimeType: "image/jpeg", appProperties: { bobKind: "lyrics", bobMedia: "leaf" } },
+    ],
+    {
+      tracks: [
+        { id: "leaf", artist: "Sub Pop", title: "The Album Leaf - The Outer Banks [OFFICIAL VIDEO]", lyricsId: "pic", lyrics: "ÿØÿà JFIF cover" },
+      ],
+    },
+  )
+  const hania = merged.find((track) => track.id === "hania")
+  const leaf = merged.find((track) => track.id === "leaf")
+  const caps = merged.find((track) => track.id === "caps")
+  assert.equal(hania.artist, "Hania Rani")
+  assert.equal(hania.title, "Leaving")
+  assert.equal(leaf.artist, "The Album Leaf")
+  assert.equal(leaf.title, "The Outer Banks")
+  assert.equal(leaf.lyrics, "")
+  assert.equal(leaf.lyricsId, "")
+  assert.equal(caps.artist, "Disappeared Completely")
+  assert.equal(caps.title, "Once In a While")
+  assert.equal(merged.filter((track) => track.title === "I'll Keep Coming").length, 1)
+  assert.equal(isLyricText("ÿØÿà JFIF"), false)
+  assert.equal(lyricLines("ÿØÿà JFIF binary").length, 0)
+  assert.equal(normalizeTrack({ title: "Saudade", artist: "Amália", name: "Saudade [abc].opus" }).title, "Saudade")
 })
 
 test("ios uses an m4a of the same song and otherwise explains opus", () => {

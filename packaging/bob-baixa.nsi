@@ -88,7 +88,7 @@ Section "bob baixa" SecApp
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "DisplayIcon" "$INSTDIR\bob-baixa.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "Publisher" "bob baixa"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "DisplayVersion" "0.6.5"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "DisplayVersion" "0.6.6"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "NoRepair" 1
   WriteRegStr HKCU "Software\bob baixa" "InstallDir" "$INSTDIR"

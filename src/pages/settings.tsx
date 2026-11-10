@@ -157,7 +157,7 @@ export function Settings() {
       <Section title={t("tools")}>
         <p className="py-3 text-[13px] leading-relaxed text-muted">{t("tools_hint")}</p>
         <p className="pb-3 text-[13px] text-muted">
-          bob baixa · {app.tools.appVersion ?? "0.6.5"}
+          bob baixa · {app.tools.appVersion ?? "0.6.6"}
           <br />
           yt-dlp {app.tools.ytdlpVersion ? `· ${app.tools.ytdlpVersion}` : `· ${t("tools_missing")}`}
           <br />

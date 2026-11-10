@@ -912,7 +912,7 @@ export function openNotes() {
 
 export async function dismissNotes() {
   const ack = getState().whatsNew
-  const version = getState().tools.appVersion || "0.6.5"
+  const version = getState().tools.appVersion || "0.6.6"
   setState((current) => ({
     ...current,
     showNotes: false,

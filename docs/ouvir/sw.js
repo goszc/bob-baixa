@@ -1,7 +1,8 @@
 /* Classic worker on purpose. A module worker fails to register on older iOS, and then
    /bob-baixa/ouvir/stream/<id> is a static 404, so the phone plays nothing. */
 
-const CACHE = "bob-ouvir-4"
+const CACHE = "bob-ouvir-5"
+const MEDIA = "bob-ouvir-media"
 const SHELL = ["./","index.html","./app.js","./library.js","./stream.js","./config.js","./manifest.webmanifest","./icons/icon-192.png","./icons/icon-512.png","./icons/icon-maskable-512.png"]
 
 let token = ""
@@ -106,6 +107,8 @@ async function streamFile(request, url) {
   try {
     upstream = await fetch(`${api}/drive/v3/files/${id}?alt=media`, { headers })
   } catch {
+    const cached = await cachedMedia(id, request)
+    if (cached) return cached
     lastStatus = 0
     await tell({ type: "stream-error", id, status: 0 })
     return new Response("sem internet", { status: 502 })
@@ -137,6 +140,32 @@ async function streamFile(request, url) {
     return new Response(body, init)
   }
   return new Response(upstream.body, init)
+}
+
+async function cachedMedia(id, request) {
+  const cache = await caches.open(MEDIA)
+  const hit = await cache.match(new URL(`offline/${id}`, self.registration.scope).href)
+  if (!hit) return null
+  const bytes = new Uint8Array(await hit.arrayBuffer())
+  const type = hit.headers.get("content-type") || "application/octet-stream"
+  const range = request.headers.get("range")
+  if (!range) {
+    return new Response(bytes, {
+      status: 200,
+      headers: { "content-type": type, "content-length": String(bytes.length), "accept-ranges": "bytes" },
+    })
+  }
+  const parsed = parseByteRange(range, bytes.length)
+  const slice = parsed ? bytes.slice(parsed.start, parsed.end + 1) : bytes
+  return new Response(slice, {
+    status: parsed ? 206 : 200,
+    headers: {
+      "content-type": type,
+      "content-length": String(slice.length),
+      "accept-ranges": "bytes",
+      ...(parsed ? { "content-range": `bytes ${parsed.start}-${parsed.end}/${bytes.length}` } : {}),
+    },
+  })
 }
 
 function fileIdFrom(pathname) {

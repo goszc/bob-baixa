@@ -1,5 +1,15 @@
 # changelog
 
+## 0.6.6
+
+- o celular deixa de abrir numa tela vazia. sem sessão, o ícone, uma frase e o botão entrar aparecem na hora. com sessão vencida, a entrada silenciosa espera no máximo 3 segundos e volta ao botão, com o erro
+- a página do celular é o player: início com continuar ouvindo, mix do dia, curtidas e recentes; biblioteca em faixas, artistas, álbuns e playlists; busca que filtra ao digitar; barra mini fixa; folha de agora tocando
+- a folha cobre a tela, com capa ou vídeo, fundo borrado da arte, coração, cinco controles em ícone, progresso, fila que se reordena e letra sincronizada. arrastar para baixo fecha, arrastar a arte pula, tocar a linha busca
+- a letra não desenha mais um jpeg. vale o texto do índice ou um .lrc pelo id, e imagem, áudio ou binário é descartado
+- título grande e artista pequeno. gravadora, aspas, official video, colchetes, caixa alta e a cópia repetida saem do nome
+- o play da barra toca a última faixa ou a primeira. enquanto a biblioteca chega, a lista é um esqueleto
+- faixas recentes pequenas ficam em cache para tocar sem rede. o manifesto, os ícones e a cor seguem o app
+
 ## 0.6.5
 
 - no celular, o service worker é um script clássico, assume a página na primeira visita e só então toca. o token fica no aparelho e a entrada silenciosa acontece antes do botão. um toque na versão mostra o worker, o token e o último stream
