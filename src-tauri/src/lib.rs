@@ -243,6 +243,35 @@ fn read_text_file(path: String) -> Result<String, String> {
     Ok(text.chars().take(200_000).collect())
 }
 
+fn place_mini(app: &tauri::AppHandle, window: &tauri::WebviewWindow) {
+    use tauri::{PhysicalPosition, Position};
+    let Some(main) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(Some(monitor)) = main.current_monitor() else {
+        return;
+    };
+    let area = *monitor.position();
+    let screen = *monitor.size();
+    let main_pos = main.outer_position().unwrap_or(area);
+    let main_size = main.outer_size().unwrap_or(screen);
+    let mini_w = 460i32;
+    let mini_h = 96i32;
+    let right = area.x + screen.width as i32;
+    let bottom = area.y + screen.height as i32;
+    let mut x = main_pos.x + main_size.width as i32 + 16;
+    let mut y = main_pos.y + main_size.height as i32 - mini_h - 32;
+    if x + mini_w > right - 8 {
+        x = main_pos.x - mini_w - 16;
+    }
+    if x < area.x + 8 {
+        x = (right - mini_w - 16).max(area.x + 8);
+        y = bottom - mini_h - 16;
+    }
+    y = y.clamp(area.y + 8, (bottom - mini_h - 8).max(area.y + 8));
+    let _ = window.set_position(Position::Physical(PhysicalPosition { x, y }));
+}
+
 #[tauri::command]
 async fn open_mini(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -255,16 +284,18 @@ async fn open_mini(app: tauri::AppHandle) -> Result<(), String> {
     }
     let window = WebviewWindowBuilder::new(&app, "mini", WebviewUrl::App("index.html?mini=1".into()))
         .title("bob baixa")
-        .inner_size(440.0, 92.0)
-        .min_inner_size(320.0, 84.0)
-        .resizable(true)
+        .inner_size(440.0, 88.0)
+        .min_inner_size(320.0, 80.0)
+        .resizable(false)
         .always_on_top(true)
         .decorations(false)
+        .transparent(true)
         .shadow(true)
         .skip_taskbar(false)
         .visible(true)
         .build()
         .map_err(|error| error.to_string())?;
+    place_mini(&app, &window);
     let _ = window.set_always_on_top(true);
     #[cfg(target_os = "windows")]
     {

@@ -1,6 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import {
+  Clapperboard,
+  Heart,
+  ListMusic,
+  Maximize2,
+  Pause,
+  PictureInPicture2,
+  Play,
+  Repeat,
+  Repeat1,
+  Settings,
+  Shuffle,
+  SkipBack,
+  SkipForward,
+  Sparkles,
+  Volume2,
+  VolumeX,
+} from "lucide-react"
 import { Segmented } from "../components/segmented"
-import { IconNext, IconPause, IconPlay, IconPrev, IconRepeat, IconShuffle, IconVolume } from "../components/player-icons"
 import { Scrubber } from "../components/scrubber"
 import { Thumb } from "../components/thumb"
 import { Equalizer } from "../components/equalizer"
@@ -9,9 +26,10 @@ import { FindLyrics, Karaoke } from "../components/lyrics-tools"
 import { invoke, isTauri } from "../lib/api"
 import { runAi } from "../lib/ai-activity"
 import { catalogTracks, refreshCatalog, useCatalog, useCatalogSettled } from "../lib/catalog"
+import { discoverySplit } from "../lib/discover"
 import { formatClock } from "../lib/format"
 import type { Key } from "../lib/i18n"
-import { relatedTracks, type Track } from "../lib/library"
+import { type Track } from "../lib/library"
 import { cn } from "../lib/cn"
 import { liked, lyricNudgeFor, nudgeLyrics, setCinema, setCrossfade, setNormalize, setSleep, toggleLike, useMusic, type SleepMode } from "../lib/music"
 import {
@@ -39,7 +57,8 @@ import {
   toggleShuffle,
   usePlayer,
 } from "../lib/player"
-import { getState, openOutput, useApp, useT } from "../store"
+import { enqueueItems, getState, openOutput, useApp, useT } from "../store"
+import { VirtualList } from "../components/virtual-list"
 
 const SOURCE_KEY: Record<string, Key> = {
   embedded: "lyrics_source_embedded",
@@ -51,10 +70,22 @@ const SOURCE_KEY: Record<string, Key> = {
   ai: "lyrics_ai_mark",
 }
 
-function accentFor(seed: string) {
-  let hash = 0
-  for (const ch of seed) hash = (hash * 33 + ch.charCodeAt(0)) >>> 0
-  return `hsl(${hash % 360} 46% 48%)`
+const DEMO_ARTISTS = ["Low Roar", "Nils Frahm", "Agnes Obel", "Ólafur Arnalds", "Bon Iver", "Fleet Foxes", "José González", "Feist"]
+const DEMO_TITLES = ["I'll Keep Coming", "Says", "Familiar", "Near Light", "Holocene", "Mykonos", "Heartbeats", "Mushaboom", "Open", "Softly"]
+const DEMO_ALBUMS = ["Once", "Spaces", "Aventine", "re:member", "For Emma", "Fleet Foxes", "Veneer", "The Reminder"]
+
+function makeDemoLibrary(): Track[] {
+  return Array.from({ length: 200 }, (_, index) => ({
+    id: index === 0 ? "preview-1" : `demo-${index + 1}`,
+    path: index === 0 ? "/preview/clip.mp4" : `/library/demo-${index + 1}.mp3`,
+    title: index < DEMO_TITLES.length ? DEMO_TITLES[index] : `${DEMO_TITLES[index % DEMO_TITLES.length]} ${index + 1}`,
+    artist: DEMO_ARTISTS[index % DEMO_ARTISTS.length],
+    album: DEMO_ALBUMS[index % DEMO_ALBUMS.length],
+    folder: "Demo",
+    pageUrl: "",
+    kind: index === 0 ? "video" : "audio",
+    duration: 150 + (index % 90),
+  }))
 }
 
 function TransportButton({
@@ -83,10 +114,10 @@ function TransportButton({
       className={cn(
         "inline-flex items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink disabled:opacity-30",
         large
-          ? "h-14 w-14 bg-[var(--player-accent,#161616)] text-white hover:opacity-90"
+          ? "h-11 w-11 bg-fill text-onfill hover:opacity-90"
           : pressed
-            ? "h-10 w-10 bg-soft text-ink"
-            : "h-10 w-10 text-muted hover:bg-soft hover:text-ink",
+            ? "h-8 w-8 bg-soft text-ink"
+            : "h-8 w-8 text-muted hover:bg-soft hover:text-ink",
       )}
     >
       {children}
@@ -94,19 +125,20 @@ function TransportButton({
   )
 }
 
-function ToolButton({ label, pressed, onClick }: { label: string; pressed?: boolean; onClick: () => void }) {
+function IconButton({ label, pressed, onClick, children }: { label: string; pressed?: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
       title={label}
+      aria-label={label}
       aria-pressed={pressed}
       onClick={onClick}
       className={cn(
-        "h-8 rounded-full px-3 text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
-        pressed ? "bg-fill text-onfill" : "bg-soft text-muted hover:text-ink",
+        "grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:bg-soft hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink",
+        pressed && "text-ink",
       )}
     >
-      {label}
+      {children}
     </button>
   )
 }
@@ -141,9 +173,9 @@ function TrackButton({
         onDrop?.()
       }}
       onClick={onClick}
-      className={cn("flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink", active ? "bg-soft" : "hover:bg-soft/80")}
+      className={cn("flex h-full w-full items-center gap-3 rounded-xl px-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink", active ? "bg-soft" : "hover:bg-soft/70")}
     >
-      <Thumb src={track.thumbnail} videoUrl={track.pageUrl} className="h-12 w-12 rounded-[10px]" />
+      <Thumb src={track.thumbnail} videoUrl={track.pageUrl} className="h-10 w-10 rounded-lg" />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
           {active && playing ? (
@@ -157,7 +189,6 @@ function TrackButton({
         </span>
         <span className="mt-0.5 block truncate text-[12px] text-muted">{track.artist}</span>
       </span>
-      <span className="text-[12px] tabular-nums text-muted">{formatClock(track.duration)}</span>
     </button>
   )
 }
@@ -295,38 +326,35 @@ export function Player() {
   const [eqOpen, setEqOpen] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
   const [karaoke, setKaraoke] = useState(false)
-  const [tools, setTools] = useState(false)
+  const [gear, setGear] = useState(false)
+  const [askOpen, setAskOpen] = useState(false)
+  const [ask, setAsk] = useState("")
+  const [note, setNote] = useState("")
+  const [ratio, setRatio] = useState(16 / 9)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const demoOnce = useRef(false)
-  const [accent, setAccent] = useState("")
+  const [demoLibrary, setDemoLibrary] = useState<Track[] | null>(null)
   const disk = useCatalog()
   const settled = useCatalogSettled()
-  const library = useMemo(
+  const catalog = useMemo(
     () => catalogTracks(app.jobs, app.history, app.convertJob, app.config.outputDir),
     [app.jobs, app.history, app.convertJob, app.config.outputDir, disk],
   )
-  const pending = !settled && library.length === 0
+  const library = demoLibrary ?? catalog
+  const pending = !demoLibrary && !settled && library.length === 0
   useEffect(() => {
+    if (demoLibrary) return
     void refreshCatalog(app.config.outputDir, () => getState().config.outputDir)
-  }, [app.config.outputDir, app.history.length, app.jobs.length])
+  }, [app.config.outputDir, app.history.length, app.jobs.length, demoLibrary])
   useEffect(() => {
     const demo = new URLSearchParams(window.location.search).get("demo")
     if (demo === "cinema" || demo === "player") {
       if (demoOnce.current) return
       demoOnce.current = true
       if (demo === "cinema") setCinema(true)
-      const demoTrack: Track = {
-        id: "preview-1",
-        path: "/preview/clip.mp4",
-        title: "Noite acesa",
-        artist: "Banda Demo",
-        album: "Ao vivo",
-        folder: "demo",
-        pageUrl: "",
-        kind: "video",
-        duration: 8,
-      }
-      playTracks([demoTrack], 0)
+      const tracks = makeDemoLibrary()
+      setDemoLibrary(tracks)
+      playTracks(tracks, 0)
       return
     }
     restoreSession(library, disk !== null || !isTauri())
@@ -349,39 +377,23 @@ export function Player() {
   }, [])
 
   useEffect(() => {
-    const src = track?.thumbnail
-    if (!src) {
-      setAccent(accentFor(title || "bob"))
-      return
+    if (!showVideo) return
+    let stop = false
+    const read = () => {
+      const video = rootRef.current?.querySelector("video")
+      if (!(video instanceof HTMLVideoElement) || video.videoWidth < 1) return false
+      setRatio(video.videoWidth / video.videoHeight)
+      return true
     }
-    const image = new Image()
-    image.crossOrigin = "anonymous"
-    image.onload = () => {
-      try {
-        const canvas = document.createElement("canvas")
-        canvas.width = 4
-        canvas.height = 4
-        const ctx = canvas.getContext("2d")
-        if (!ctx) return
-        ctx.drawImage(image, 0, 0, 4, 4)
-        const data = ctx.getImageData(0, 0, 4, 4).data
-        let r = 0
-        let g = 0
-        let b = 0
-        const count = data.length / 4
-        for (let index = 0; index < data.length; index += 4) {
-          r += data[index]
-          g += data[index + 1]
-          b += data[index + 2]
-        }
-        setAccent(`rgb(${Math.round(r / count)} ${Math.round(g / count)} ${Math.round(b / count)})`)
-      } catch {
-        setAccent(accentFor(title || src))
-      }
+    if (read()) return
+    const timer = window.setInterval(() => {
+      if (stop || read()) window.clearInterval(timer)
+    }, 200)
+    return () => {
+      stop = true
+      window.clearInterval(timer)
     }
-    image.onerror = () => setAccent(accentFor(title || "bob"))
-    image.src = src
-  }, [track?.thumbnail, title])
+  }, [showVideo, track?.path])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -409,119 +421,219 @@ export function Player() {
     return () => window.removeEventListener("keydown", onKey)
   }, [player.currentTime, cinema])
 
-  const stage = (
-    <div className={cn("relative overflow-hidden bg-black", cinema ? "h-full w-full" : "aspect-square rounded-[28px]")}>
+  const wide = showVideo && ratio > 1.15
+  const frame = showVideo
+    ? { width: `min(100%, ${wide ? 720 : 360}px, calc(${wide ? 46 : 40}vh * ${ratio}))`, aspectRatio: String(ratio) }
+    : { width: "min(100%, 280px, 34vh)", aspectRatio: "1" }
+
+  const picture = (
+    <>
       {showVideo ? (
-        <div ref={setVideoSlot} className="absolute inset-0 bg-black" />
+        <div ref={setVideoSlot} className="stage-video absolute inset-0 bg-black" />
       ) : (
         <Thumb src={track?.thumbnail} videoUrl={track?.pageUrl || track?.title || track?.path} className="absolute inset-0 h-full w-full rounded-none" />
       )}
       {player.buffering ? (
-        <p className="absolute bottom-3 left-3 rounded-full bg-black/60 px-3 py-1 text-[12px] text-white">{t("player_buffering")}</p>
+        <p className="absolute bottom-3 left-3 rounded-full bg-black/55 px-3 py-1 text-[12px] text-white">{t("player_buffering")}</p>
       ) : null}
+    </>
+  )
+
+  const stage = cinema ? (
+    <div className="relative h-full w-full overflow-hidden bg-black">{picture}</div>
+  ) : (
+    <div className="relative mx-auto overflow-hidden rounded-2xl bg-black" style={frame}>
+      {picture}
     </div>
   )
 
-  const controls = (
-    <div className="shrink-0 px-4 py-4 md:px-8">
-      <div className={cn(cinema ? "mx-auto flex max-w-5xl items-end gap-6" : "")}>
-        <div className="min-w-0 flex-1">
-          {!cinema ? <p className="text-[12px] text-muted">{t("player_now")}</p> : null}
-          <h1 className="truncate text-[26px] font-medium tracking-[-0.04em] md:text-[32px]">
-            {title || (library.length ? t("player_idle") : pending ? t("searching") : t("player_empty"))}
-          </h1>
-          <p className="truncate text-[15px] text-muted">{[artist, album].filter(Boolean).join(" · ") || (track ? "\u00a0" : t("player_empty_hint"))}</p>
-          {player.error ? (
-            <p className="mt-2 text-[13px] text-danger">{t(player.error === "missing" ? "player_missing" : "player_failed")}</p>
-          ) : null}
-          <div className="mt-4">
-            <Scrubber value={player.currentTime} max={player.duration} label={t("player_now")} disabled={disabled} onChange={seek} />
-            <div className="mt-1 flex justify-between text-[12px] tabular-nums text-muted">
-              <span>{formatClock(player.currentTime)}</span>
-              <span>{formatClock(player.duration || track?.duration)}</span>
-            </div>
-          </div>
-          <div className="mt-3 flex items-center justify-center gap-2">
-            <TransportButton label={t("player_shuffle")} pressed={player.shuffle} disabled={!player.queue.length} onClick={toggleShuffle}>
-              <IconShuffle className="h-[18px] w-[18px]" />
-            </TransportButton>
-            <TransportButton label={t("player_prev")} disabled={disabled} onClick={playPrevious}>
-              <IconPrev className="h-5 w-5" />
-            </TransportButton>
-            <TransportButton label={player.playing ? t("pause") : t("player_play")} disabled={disabled} onClick={togglePlayback} large>
-              {player.playing ? <IconPause className="h-5 w-5" /> : <IconPlay className="h-5 w-5" />}
-            </TransportButton>
-            <TransportButton label={t("player_next")} disabled={disabled} onClick={playNext}>
-              <IconNext className="h-5 w-5" />
-            </TransportButton>
-            <TransportButton label={repeatLabel} pressed={player.repeat !== "off"} disabled={!player.queue.length} onClick={cycleRepeat}>
-              <IconRepeat className="h-[18px] w-[18px]" one={player.repeat === "one"} />
-            </TransportButton>
-          </div>
-          <div className="mx-auto mt-4 flex max-w-md items-center gap-3">
-            <button type="button" aria-label={player.muted ? t("player_volume") : t("player_mute")} title={t("player_volume")} className="text-muted hover:text-ink" onClick={toggleMute}>
-              <IconVolume className="h-5 w-5" muted={player.muted || player.volume === 0} />
-            </button>
-            <div className="min-w-0 flex-1">
-              <Scrubber value={player.muted ? 0 : player.volume} max={1} label={t("player_volume")} onChange={setVolume} />
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            <ToolButton label={loved ? t("player_unlike") : t("player_like")} pressed={loved} onClick={() => track && toggleLike(track.path)} />
-            <ToolButton label={t("player_lyrics")} pressed={player.panel === "lyrics" || cinema} onClick={() => (cinema ? setCinema(false) : setPanel("lyrics"))} />
-            <ToolButton label={t("player_queue")} pressed={player.panel === "queue"} onClick={() => setPanel("queue")} />
-            <ToolButton
-              label={t("player_radio")}
-              onClick={() => {
-                if (!track) return
-                const list = relatedTracks(track, library)
-                if (list.length < 2) return
-                playTracks(list, 0, true)
-              }}
-            />
-            <ToolButton label={t("player_tools")} pressed={tools} onClick={() => setTools((value) => !value)} />
-            <ToolButton label={cinema ? t("player_cinema_off") : t("player_cinema")} pressed={cinema} onClick={() => setCinema(!cinema)} />
-            <ToolButton
-              label={t("player_fullscreen")}
-              onClick={() => {
-                const node = rootRef.current
-                if (!node) return
-                if (document.fullscreenElement) void document.exitFullscreen()
-                else void node.requestFullscreen()
-              }}
-            />
-            <ToolButton label={t("player_mini")} onClick={() => void invoke("open_mini").catch(() => {})} />
-          </div>
-          {tools ? (
-            <div className="mx-auto mt-3 max-w-lg rounded-2xl bg-soft p-3 text-[13px]">
-              <label className="flex items-center gap-3">
-                <span className="text-muted">{t("player_crossfade")}</span>
-                <input type="range" min={0} max={12} step={1} value={music.crossfade} aria-label={t("player_crossfade")} onChange={(event) => setCrossfade(Number(event.target.value))} />
-                <span className="tabular-nums text-muted">{music.crossfade === 0 ? t("player_off") : `${music.crossfade}s`}</span>
-              </label>
-              <label className="mt-2 flex items-center justify-between">
-                <span>{t("player_normalize")}</span>
-                <input type="checkbox" checked={music.normalize} onChange={(event) => setNormalize(event.target.checked)} />
-              </label>
-              <div className="mt-2 flex flex-wrap gap-1">
-                <span className="mr-1 self-center text-muted">{t("player_sleep")}</span>
-                {(["off", "15", "30", "45", "60", "end"] as SleepMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    aria-pressed={music.sleepMode === mode}
-                    className={cn("h-7 rounded-full px-2 text-[12px]", music.sleepMode === mode ? "bg-fill text-onfill" : "bg-surface text-muted")}
-                    onClick={() => setSleep(mode)}
-                  >
-                    {mode === "off" ? t("player_off") : mode === "end" ? t("player_sleep_end") : t("player_sleep_min", { n: mode })}
-                  </button>
-                ))}
-              </div>
-              <button type="button" className="mt-2 text-[12px] text-muted hover:text-ink" onClick={() => setEqOpen(true)}>
+  async function discover() {
+    const plan = discoverySplit(Math.min(library.length, 12), app.config.discoverRatio)
+    const known = library.slice(0, plan.library)
+    if (known.length) playTracks(known, 0)
+    if (!isTauri()) return
+    const artists = [...new Set(library.map((item) => item.artist).filter(Boolean))].slice(0, 8)
+    const queries = await invoke<string[]>("discover_queries", { artists })
+    await enqueueItems(
+      queries.slice(0, plan.fresh || 2).map((queryText) => ({
+        url: `ytsearch1:${queryText}`,
+        title: queryText,
+        audioOnly: true,
+        audioFormat: "opus",
+        audioBitrate: "24k",
+      })),
+    )
+  }
+
+  async function mood(name: string) {
+    if (!isTauri()) return
+    const rows = library.map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, plays: 1 }))
+    const paths = await runAi(t("ai_mood"), "gemini-3.5-flash-lite", () => invoke<string[]>("mood_mix", { mood: name, library: rows }), (found) => `${found.length}`)
+    const list = paths.map((path) => library.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
+    if (list.length) playTracks(list, 0)
+  }
+
+  async function askQueue() {
+    const text = ask.trim()
+    if (!text) return
+    if (!isTauri()) {
+      setNote(t("player_ask"))
+      return
+    }
+    const rows = library.map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, plays: 1 }))
+    const paths = await runAi(t("ai_thinking"), "gemini-3.5-flash-lite", () => invoke<string[]>("natural_queue", { text, library: rows }), (found) => `${found.length}`)
+    const list = paths.map((path) => library.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
+    if (list.length) playTracks(list, 0)
+    setNote(list.length ? `${list.length}` : t("lyrics_empty"))
+  }
+
+  const transport = (
+    <div className="flex items-center justify-center gap-0.5">
+      <TransportButton label={t("player_shuffle")} pressed={player.shuffle} disabled={!player.queue.length} onClick={toggleShuffle}>
+        <Shuffle className="h-[18px] w-[18px]" />
+      </TransportButton>
+      <TransportButton label={t("player_prev")} disabled={disabled} onClick={playPrevious}>
+        <SkipBack className="h-5 w-5" />
+      </TransportButton>
+      <TransportButton label={player.playing ? t("pause") : t("player_play")} disabled={disabled} onClick={togglePlayback} large>
+        {player.playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+      </TransportButton>
+      <TransportButton label={t("player_next")} disabled={disabled} onClick={playNext}>
+        <SkipForward className="h-5 w-5" />
+      </TransportButton>
+      <TransportButton label={repeatLabel} pressed={player.repeat !== "off"} disabled={!player.queue.length} onClick={cycleRepeat}>
+        {player.repeat === "one" ? <Repeat1 className="h-[18px] w-[18px]" /> : <Repeat className="h-[18px] w-[18px]" />}
+      </TransportButton>
+      <IconButton label={loved ? t("player_unlike") : t("player_like")} pressed={loved} onClick={() => track && toggleLike(track.path)}>
+        <Heart className="h-[18px] w-[18px]" fill={loved ? "currentColor" : "none"} />
+      </IconButton>
+      <IconButton label={t("player_queue")} pressed={player.panel === "queue"} onClick={() => setPanel("queue")}>
+        <ListMusic className="h-[18px] w-[18px]" />
+      </IconButton>
+      <IconButton label={cinema ? t("player_cinema_off") : t("player_cinema")} pressed={cinema} onClick={() => setCinema(!cinema)}>
+        <Clapperboard className="h-[18px] w-[18px]" />
+      </IconButton>
+      <IconButton
+        label={t("player_ask")}
+        pressed={askOpen}
+        onClick={() => {
+          setAskOpen((value) => !value)
+          setGear(false)
+        }}
+      >
+        <Sparkles className="h-[18px] w-[18px]" />
+      </IconButton>
+      <div className="relative">
+        <IconButton
+          label={t("player_tools")}
+          pressed={gear}
+          onClick={() => {
+            setGear((value) => !value)
+            setAskOpen(false)
+          }}
+        >
+          <Settings className="h-[18px] w-[18px]" />
+        </IconButton>
+        {gear ? (
+          <div className="absolute bottom-11 left-1/2 z-20 w-64 -translate-x-1/2 rounded-2xl border border-line bg-surface p-4 text-[14px] shadow-sm">
+            <label className="flex items-center gap-3">
+              <span className="w-24 shrink-0 text-muted">{t("player_crossfade")}</span>
+              <input className="min-w-0 flex-1" type="range" min={0} max={12} step={1} value={music.crossfade} aria-label={t("player_crossfade")} onChange={(event) => setCrossfade(Number(event.target.value))} />
+              <span className="w-8 tabular-nums text-muted">{music.crossfade === 0 ? t("player_off") : `${music.crossfade}s`}</span>
+            </label>
+            <label className="mt-3 flex items-center justify-between gap-3">
+              <span>{t("player_normalize")}</span>
+              <input type="checkbox" checked={music.normalize} onChange={(event) => setNormalize(event.target.checked)} />
+            </label>
+            <label className="mt-3 flex items-center justify-between gap-3">
+              <span className="text-muted">{t("player_sleep")}</span>
+              <select
+                aria-label={t("player_sleep")}
+                value={music.sleepMode}
+                onChange={(event) => setSleep(event.target.value as SleepMode)}
+                className="h-8 rounded-lg bg-soft px-2 text-[13px]"
+              >
+                <option value="off">{t("player_off")}</option>
+                <option value="15">{t("player_sleep_min", { n: "15" })}</option>
+                <option value="30">{t("player_sleep_min", { n: "30" })}</option>
+                <option value="45">{t("player_sleep_min", { n: "45" })}</option>
+                <option value="60">{t("player_sleep_min", { n: "60" })}</option>
+                <option value="end">{t("player_sleep_end")}</option>
+              </select>
+            </label>
+            <div className="mt-3 flex flex-col items-start gap-1">
+              <button type="button" className="text-muted hover:text-ink" onClick={() => void discover().catch(() => {})}>
+                {t("player_discover")}
+              </button>
+              <button type="button" className="text-muted hover:text-ink" onClick={() => void mood(t("player_mood_study")).catch(() => {})}>
+                {t("player_mood_study")}
+              </button>
+              <button type="button" className="text-muted hover:text-ink" onClick={() => void mood(t("player_mood_train")).catch(() => {})}>
+                {t("player_mood_train")}
+              </button>
+              <button type="button" className="text-muted hover:text-ink" onClick={() => setEqOpen(true)}>
                 {t("eq_title")}
               </button>
             </div>
-          ) : null}
+          </div>
+        ) : null}
+      </div>
+      <IconButton
+        label={t("player_fullscreen")}
+        onClick={() => {
+          const node = rootRef.current
+          if (!node) return
+          if (document.fullscreenElement) void document.exitFullscreen()
+          else void node.requestFullscreen()
+        }}
+      >
+        <Maximize2 className="h-[18px] w-[18px]" />
+      </IconButton>
+      <IconButton label={t("player_mini")} onClick={() => void invoke("open_mini").catch(() => {})}>
+        <PictureInPicture2 className="h-[18px] w-[18px]" />
+      </IconButton>
+    </div>
+  )
+
+  const meta = (
+    <div className="mx-auto w-full max-w-[560px]">
+      <h1 className="truncate text-center text-[20px] font-medium tracking-[-0.03em]">
+        {title || (library.length ? t("player_idle") : pending ? t("searching") : t("player_empty"))}
+      </h1>
+      <p className="mt-1 truncate text-center text-[14px] text-muted">{[artist, album].filter(Boolean).join(" · ") || (track ? "\u00a0" : t("player_empty_hint"))}</p>
+      {player.error ? <p className="mt-2 text-center text-[14px] text-danger">{t(player.error === "missing" ? "player_missing" : "player_failed")}</p> : null}
+      {askOpen ? (
+        <form
+          className="mx-auto mt-3 flex max-w-sm gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void askQueue().catch((error: Error) => setNote(error.message))
+          }}
+        >
+          <input
+            value={ask}
+            onChange={(event) => setAsk(event.target.value)}
+            placeholder={t("player_ask")}
+            aria-label={t("player_ask")}
+            className="h-9 min-w-0 flex-1 rounded-full border border-line bg-surface px-3 text-[14px] outline-none"
+          />
+        </form>
+      ) : null}
+      {note ? <p className="mt-2 text-center text-[12px] text-muted">{note}</p> : null}
+      <div className="mt-4">{transport}</div>
+      <div className="mt-3">
+        <Scrubber value={player.currentTime} max={player.duration} label={t("player_now")} disabled={disabled} onChange={seek} />
+        <div className="mt-1 flex justify-between text-[14px] tabular-nums text-muted">
+          <span>{formatClock(player.currentTime)}</span>
+          <span>{formatClock(player.duration || track?.duration)}</span>
+        </div>
+      </div>
+      <div className="mx-auto mt-2 flex max-w-xs items-center gap-3">
+        <button type="button" aria-label={player.muted ? t("player_volume") : t("player_mute")} title={t("player_volume")} className="text-muted hover:text-ink" onClick={toggleMute}>
+          {player.muted || player.volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <Scrubber value={player.muted ? 0 : player.volume} max={1} label={t("player_volume")} onChange={setVolume} />
         </div>
       </div>
     </div>
@@ -530,7 +642,7 @@ export function Player() {
   const lyricsPane = <Lyrics time={player.currentTime} onFind={() => setFindOpen(true)} onKaraoke={() => setKaraoke(true)} />
 
   return (
-    <div ref={rootRef} className="flex h-full min-h-0 flex-col bg-bg text-ink" style={{ ["--player-accent" as string]: accent || undefined }}>
+    <div ref={rootRef} className="flex h-full min-h-0 flex-col bg-bg text-ink">
       {cinema ? (
         <div className="flex min-h-0 flex-1">
           <div className="min-h-0 min-w-0" style={{ flex: "7 1 0%" }}>
@@ -541,56 +653,71 @@ export function Player() {
           </div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          <section className="min-h-0 flex-1 overflow-auto px-6 py-6 md:px-10">
-            <div className="mx-auto w-full max-w-[460px]">{stage}</div>
+        <div className="flex min-h-0 min-w-0 flex-1">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center overflow-hidden px-6 py-6">
+            {stage}
+            <div className="mt-6 w-full shrink-0">{meta}</div>
           </section>
-          <aside className="flex min-h-[280px] w-full min-w-0 flex-1 flex-col border-t border-line px-4 py-4 lg:min-h-0 lg:w-[400px] lg:flex-none lg:border-t-0 lg:border-l">
-            <Segmented
-              value={player.panel}
-              onChange={setPanel}
-              options={[
-                { value: "library", label: t("player_library") },
-                { value: "queue", label: t("player_queue") },
-                { value: "lyrics", label: t("player_lyrics") },
-              ]}
-            />
-            {player.panel === "lyrics" ? (
-              <div className="mt-3 flex min-h-0 flex-1 flex-col">{lyricsPane}</div>
-            ) : player.panel === "library" ? (
-              <LibraryPanel
-                tracks={library}
-                pending={pending}
-                query={query}
-                onQuery={setQuery}
-                renderTrack={(item, onPlay) => (
-                  <TrackButton track={item} active={item.path === track?.path} playing={player.playing && item.path === track?.path} onClick={onPlay} />
-                )}
+          <aside className="flex h-full w-[300px] min-h-0 shrink-0 flex-col border-l border-line">
+            <div className="shrink-0 px-3 pt-3">
+              <Segmented
+                value={player.panel}
+                onChange={setPanel}
+                options={[
+                  { value: "library", label: t("player_library") },
+                  { value: "queue", label: t("player_queue") },
+                  { value: "lyrics", label: t("player_lyrics") },
+                ]}
               />
+            </div>
+            {player.panel === "lyrics" ? (
+              <div className="mt-2 flex min-h-0 flex-1 flex-col">{lyricsPane}</div>
+            ) : player.panel === "library" ? (
+              <div className="min-h-0 flex-1">
+                <LibraryPanel
+                  tracks={library}
+                  pending={pending}
+                  query={query}
+                  onQuery={setQuery}
+                  renderTrack={(item, onPlay) => (
+                    <TrackButton track={item} active={item.path === track?.path} playing={player.playing && item.path === track?.path} onClick={onPlay} />
+                  )}
+                />
+              </div>
             ) : (
-              <div className="mt-3 min-h-0 flex-1 space-y-1 overflow-auto pb-4">
-                {queue.length === 0 ? <p className="px-2 py-10 text-[14px] text-muted">{t("player_queue_empty")}</p> : null}
-                {queue.map((item, index) => (
-                  <TrackButton
-                    key={`${item.path}-${index}`}
-                    track={item}
-                    active={player.order[index] === player.index}
-                    playing={player.playing && item.path === track?.path}
-                    draggable
-                    onDragStart={() => setDragFrom(index)}
-                    onDrop={() => {
-                      if (dragFrom != null) reorderQueue(dragFrom, index)
-                      setDragFrom(null)
+              <div className="min-h-0 flex-1">
+                {queue.length === 0 ? (
+                  <p className="px-4 py-8 text-[14px] text-muted">{t("player_queue_empty")}</p>
+                ) : (
+                  <VirtualList
+                    count={queue.length}
+                    rowHeight={56}
+                    className="h-full overflow-auto"
+                    render={(index) => {
+                      const item = queue[index]
+                      return (
+                        <TrackButton
+                          track={item}
+                          active={player.order[index] === player.index}
+                          playing={player.playing && item.path === track?.path}
+                          draggable
+                          onDragStart={() => setDragFrom(index)}
+                          onDrop={() => {
+                            if (dragFrom != null) reorderQueue(dragFrom, index)
+                            setDragFrom(null)
+                          }}
+                          onClick={() => playOrderSlot(index)}
+                        />
+                      )
                     }}
-                    onClick={() => playOrderSlot(index)}
                   />
-                ))}
+                )}
               </div>
             )}
           </aside>
         </div>
       )}
-      {controls}
+      {cinema ? <div className="shrink-0 border-t border-line px-6 py-3">{meta}</div> : null}
       {track && player.error ? (
         <button type="button" className="sr-only" onClick={() => void openOutput(track.path)}>
           {t("open_folder")}

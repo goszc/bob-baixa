@@ -58,6 +58,55 @@ export function useCatalogSettled() {
   )
 }
 
+interface DriveFile {
+  id: string
+  path: string
+  title: string
+  artist: string
+  album: string
+  duration?: number | null
+  kind: string
+  size: number
+  name?: string
+  cover?: string
+}
+
+function mapDrive(drive: DriveFile[]): Track[] {
+  return drive.map((file) => ({
+    id: file.id,
+    path: file.path,
+    title: file.title || file.name || file.path,
+    artist: file.artist || "",
+    album: file.album || "",
+    folder: "drive",
+    pageUrl: file.name || file.title || "",
+    thumbnail: file.cover || undefined,
+    duration: file.duration ?? undefined,
+    kind: file.kind === "video" ? "video" : "audio",
+    size: file.size,
+  }))
+}
+
+async function loadRemote(mine: number) {
+  try {
+    const drive = await invoke<DriveFile[]>("drive_tracks")
+    if (mine !== request) return
+    remoteTracks = mapDrive(drive)
+  } catch {
+    if (mine !== request) return
+    remoteTracks = []
+  }
+  settled = true
+  emit()
+  void invoke<DriveFile[]>("drive_refresh")
+    .then((drive) => {
+      if (mine !== request) return
+      remoteTracks = mapDrive(drive)
+      emit()
+    })
+    .catch(() => {})
+}
+
 export async function refreshCatalog(dir?: string, liveDir?: () => string) {
   if (!isTauri()) {
     disk = null
@@ -66,63 +115,29 @@ export async function refreshCatalog(dir?: string, liveDir?: () => string) {
     return
   }
   const outputDir = (dir ?? liveDir?.() ?? "").trim()
-  if (!outputDir) return
   const mine = ++request
+  if (!outputDir) {
+    disk = []
+    await loadRemote(mine)
+    return
+  }
   try {
     const files = await invoke<DiskFile[]>("scan_library", { path: outputDir })
     if (mine !== request) return
     if (liveDir && trackKey(liveDir()) !== trackKey(outputDir)) return
     disk = files
-    try {
-      const drive = await invoke<Array<{ id: string; path: string; title: string; artist: string; album: string; duration?: number | null; kind: string; size: number; name?: string; cover?: string }>>("drive_tracks")
-      remoteTracks = drive.map((file) => ({
-        id: file.id,
-        path: file.path,
-        title: file.title || file.name || file.path,
-        artist: file.artist || "",
-        album: file.album || "",
-        folder: "drive",
-        pageUrl: file.name || file.title || "",
-        thumbnail: file.cover || undefined,
-        duration: file.duration ?? undefined,
-        kind: file.kind === "video" ? "video" : "audio",
-        size: file.size,
-      }))
-    } catch {
-      remoteTracks = []
-    }
-    settled = true
-    emit()
-    void invoke<Array<{ id: string; path: string; title: string; artist: string; album: string; duration?: number | null; kind: string; size: number; name?: string; cover?: string }>>("drive_refresh")
-      .then((drive) => {
-        if (mine !== request) return
-        remoteTracks = drive.map((file) => ({
-          id: file.id,
-          path: file.path,
-          title: file.title || file.name || file.path,
-          artist: file.artist || "",
-          album: file.album || "",
-          folder: "drive",
-          pageUrl: file.name || file.title || "",
-          thumbnail: file.cover || undefined,
-          duration: file.duration ?? undefined,
-          kind: file.kind === "video" ? "video" : "audio",
-          size: file.size,
-        }))
-        emit()
-      })
-      .catch(() => {})
   } catch {
     if (mine !== request) return
-    settled = true
-    emit()
+    disk = disk ?? []
   }
+  await loadRemote(mine)
 }
 
 export function catalogTracks(jobs: Job[], history: HistoryEntry[], convert: ConvertJob | null, outputDir: string): Track[] {
   const hidden = removed
   const fromHistory = collectTracks(jobs, history, convert, outputDir).map((track) => withPlace(track, outputDir))
-  if (!disk) return dedupeTracks(fromHistory.filter((track) => !hidden.has(trackKey(track.path))))
+  const cloud = remoteTracks.filter((track) => !hidden.has(trackKey(track.path)))
+  if (!disk) return dedupeTracks([...fromHistory.filter((track) => !hidden.has(trackKey(track.path))), ...cloud])
   const meta = new Map<string, { thumbnail?: string; pageUrl: string; duration?: number }>()
   for (const track of fromHistory) {
     meta.set(trackKey(track.path), { thumbnail: track.thumbnail, pageUrl: track.pageUrl, duration: track.duration })
