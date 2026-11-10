@@ -1,5 +1,17 @@
 # changelog
 
+## 0.5.0
+
+- antes de buscar a letra, o app tenta reconhecer a faixa: impressão digital do acoustid (com a chave que você cola em configurações) e ficha do musicbrainz. a capa oficial vem do cover art archive ou do itunes, e entra no arquivo
+- no fim do download, a legenda manual do youtube vira `.lrc` quando parece letra. a automática, palavra por palavra, fica de fora
+- a busca de letra aceita nome parecido, com e sem "feat.", com e sem artista, e uma diferença de duração. versão ao vivo, remix, acústico ou acelerada usa a letra da original se a daquela versão não existir
+- no player, **buscar letra** lista candidatos e fixa o escolhido ao lado da faixa. dá para traduzir lado a lado e abrir o karaokê em tela cheia
+- a biblioteca procura um trecho da letra. dá para revisar tags do musicbrainz, achar duplicatas e arquivos quebrados, e converter a pasta para o modo econômico (opus ~24 kbps), pulando o que já está econômico
+- a fila de download fica no disco. queda de rede ou 429 espera e tenta de novo, também ao reabrir o app
+- equalizador com predefinições e bandas, geral ou por faixa. atalhos globais para tocar, próxima, anterior e curtir, sem abrir a janela
+- mix do dia a partir do que você ouviu neste computador
+- google drive, se a compilação trouxer o cliente: **entrar com google** envia as faixas novas para `bob baixa/músicas/artista/álbum` e os vídeos para `bob baixa/vídeos`, com a letra ao lado. a biblioteca junta o disco e o drive, e a reprodução do drive passa pelo app. dá para manter só no drive. playlists, curtidas e a retrospectiva sincronizam num json. o token fica no gerenciador de credenciais do windows
+
 ## 0.4.1
 
 - a biblioteca lista mp3, mp4 e os outros formatos que o player toca que já estão na pasta, também em subpastas. no windows a varredura gravava o caminho com `\\?\` e a lista ficava vazia

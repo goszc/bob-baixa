@@ -43,6 +43,26 @@ pub struct Config {
     /// Last version whose "o que há de novo" dialog was dismissed.
     #[serde(default)]
     pub seen_version: String,
+    /// AcoustID application key. Empty skips the fingerprint and uses text search.
+    #[serde(default)]
+    pub acoustid_key: String,
+    /// Lyrics translation target. `pt` means pt-BR.
+    #[serde(default = "default_translate_lang")]
+    pub translate_lang: String,
+    /// After a download, fetch manual (not auto) subtitles and keep a `.lrc` when they look like lyrics.
+    #[serde(default = "default_true")]
+    pub grab_lyrics: bool,
+    /// After a successful Drive upload, delete the local copy.
+    #[serde(default)]
+    pub drive_only: bool,
+    #[serde(default = "default_hotkey_play")]
+    pub hotkey_play: String,
+    #[serde(default = "default_hotkey_next")]
+    pub hotkey_next: String,
+    #[serde(default = "default_hotkey_prev")]
+    pub hotkey_prev: String,
+    #[serde(default = "default_hotkey_like")]
+    pub hotkey_like: String,
 }
 
 impl Default for Config {
@@ -84,8 +104,36 @@ impl Default for Config {
             context_menu: false,
             presets: Vec::new(),
             seen_version: String::new(),
+            acoustid_key: String::new(),
+            translate_lang: default_translate_lang(),
+            grab_lyrics: true,
+            drive_only: false,
+            hotkey_play: default_hotkey_play(),
+            hotkey_next: default_hotkey_next(),
+            hotkey_prev: default_hotkey_prev(),
+            hotkey_like: default_hotkey_like(),
         }
     }
+}
+
+fn default_translate_lang() -> String {
+    "pt".into()
+}
+
+fn default_hotkey_play() -> String {
+    "ctrl+alt+p".into()
+}
+
+fn default_hotkey_next() -> String {
+    "ctrl+alt+right".into()
+}
+
+fn default_hotkey_prev() -> String {
+    "ctrl+alt+left".into()
+}
+
+fn default_hotkey_like() -> String {
+    "ctrl+alt+l".into()
 }
 
 fn default_true() -> bool {
@@ -127,8 +175,18 @@ pub fn claim_downloads(jobs: &mut [Job], parallel: u32) -> Vec<String> {
             break;
         }
         if job.state == "queued" {
+            if job
+                .retry_at
+                .as_deref()
+                .map(iso_in_future)
+                .unwrap_or(false)
+            {
+                continue;
+            }
             job.state = "downloading".into();
             job.error = None;
+            job.warning = None;
+            job.retry_at = None;
             ids.push(job.id.clone());
             left -= 1;
         }
@@ -271,6 +329,11 @@ pub struct Job {
     pub output_dir: String,
     #[serde(default)]
     pub filename_template: String,
+    /// Transient failures (network, HTTP 429). The queue stays on disk and waits until `retry_at`.
+    #[serde(default)]
+    pub attempts: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -416,6 +479,15 @@ pub enum BobEvent {
     Convert { job: ConvertJob },
     Schedule { at: Option<String> },
     Update { version: String },
+    /// Batch Opus conversion. `state` is `running`, `done`, `failed`, or `cancelled`.
+    Economic {
+        done: u32,
+        total: u32,
+        current: String,
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
 }
 
 pub fn text(language: &str, pt: &str, en: &str) -> String {
@@ -524,6 +596,8 @@ impl Job {
                 .filter(|dir| !dir.trim().is_empty())
                 .unwrap_or_else(|| config.output_dir.clone()),
             filename_template: config.filename_template.clone(),
+            attempts: 0,
+            retry_at: None,
         }
     }
 }
@@ -694,5 +768,37 @@ mod tests {
         assert_eq!(audio.audio_format.as_deref(), Some("mp3"));
         assert_eq!(audio.container, "webm");
         assert!(audio.warning.is_none());
+    }
+
+    #[test]
+    fn the_queue_is_still_there_after_a_restart_and_a_429_waits() {
+        use crate::{apply_transient_retry, resume_interrupted};
+
+        let jobs = vec![job("cut", "downloading"), job("wait", "queued")];
+        let saved = serde_json::to_string(&jobs).unwrap();
+        let mut loaded: Vec<Job> = serde_json::from_str(&saved).unwrap();
+        assert_eq!(loaded[0].state, "downloading");
+        assert_eq!(loaded[0].attempts, 0);
+        resume_interrupted(&mut loaded);
+        assert_eq!(loaded[0].state, "queued");
+        assert_eq!(loaded[1].state, "queued");
+
+        let secs = apply_transient_retry(&mut loaded[0]);
+        assert_eq!(secs, 2);
+        assert_eq!(loaded[0].attempts, 1);
+        assert_eq!(loaded[0].state, "queued");
+        assert!(loaded[0].retry_at.as_deref().map(iso_in_future).unwrap_or(false));
+        let again = serde_json::to_string(&loaded).unwrap();
+        let round: Vec<Job> = serde_json::from_str(&again).unwrap();
+        assert_eq!(round[0].attempts, 1);
+        assert!(round[0].retry_at.is_some());
+        let ids = claim_downloads(&mut loaded, 2);
+        assert_eq!(ids, vec!["wait".to_string()]);
+        assert_eq!(loaded[0].state, "queued");
+
+        let old = r#"{"id":"old","url":"https://example.com/old","title":"t","state":"queued","progress":0,"createdAt":"2026-01-01T00:00:00Z","audioOnly":true,"quality":"1080","container":"mp4","audioBitrate":"24k","outputDir":"C:/m","filenameTemplate":"x"}"#;
+        let legacy: Job = serde_json::from_str(old).unwrap();
+        assert_eq!(legacy.attempts, 0);
+        assert!(legacy.retry_at.is_none());
     }
 }

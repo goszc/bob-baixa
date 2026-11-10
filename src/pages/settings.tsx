@@ -1,4 +1,4 @@
-import type { ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { PageHeader } from "../components/page-header"
 import { Segmented } from "../components/segmented"
 import { Button } from "../components/ui/button"
@@ -7,6 +7,7 @@ import { Select } from "../components/ui/select"
 import { Switch } from "../components/ui/switch"
 import type { Key } from "../lib/i18n"
 import { cn } from "../lib/cn"
+import { invoke, isTauri } from "../lib/api"
 import type { CookiesBrowser, Lang, ThemeMode } from "../lib/types"
 import { checkUpdates, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
 
@@ -182,6 +183,8 @@ export function Settings() {
         </div>
         {app.tools.message ? <p className="pb-3 text-[13px] text-danger">{app.tools.message}</p> : null}
       </Section>
+      <LibrarySection />
+      <DriveSection />
       <Section title={t("about")}>
         <p className="py-3 text-[14px]">bob baixa · {t("version")}</p>
         <div className="pb-4">
@@ -193,6 +196,118 @@ export function Settings() {
         <p className="max-w-[52ch] pb-4 text-[13px] leading-relaxed text-muted">{t("protocol")}</p>
       </Section>
     </div>
+  )
+}
+
+function LibrarySection() {
+  const app = useApp()
+  const t = useT()
+  const config = app.config
+  return (
+    <>
+      <Section title={t("settings_acoustid")}>
+        <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_acoustid_hint")}</p>
+        <Input value={config.acoustidKey} onChange={(event) => setConfig({ acoustidKey: event.target.value })} placeholder="acoustid" />
+        <div className="mt-4">
+          <Row label={t("settings_grab_lyrics")} hint={t("settings_grab_lyrics_hint")}>
+            <Switch label={t("settings_grab_lyrics")} checked={config.grabLyrics} onCheckedChange={(value) => setConfig({ grabLyrics: value })} />
+          </Row>
+          <div className="border-b border-line py-4">
+            <div className="text-[14px]">{t("settings_translate")}</div>
+            <Select className="mt-3 w-[160px]" value={config.translateLang} onChange={(event) => setConfig({ translateLang: event.target.value })}>
+              <option value="pt">português</option>
+              <option value="en">english</option>
+              <option value="es">español</option>
+              <option value="fr">français</option>
+            </Select>
+          </div>
+        </div>
+      </Section>
+      <Section title={t("settings_hotkeys")}>
+        <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_hotkeys_hint")}</p>
+        <Hotkey label={t("settings_hotkey_play")} value={config.hotkeyPlay} onChange={(hotkeyPlay) => setConfig({ hotkeyPlay })} />
+        <Hotkey label={t("settings_hotkey_next")} value={config.hotkeyNext} onChange={(hotkeyNext) => setConfig({ hotkeyNext })} />
+        <Hotkey label={t("settings_hotkey_prev")} value={config.hotkeyPrev} onChange={(hotkeyPrev) => setConfig({ hotkeyPrev })} />
+        <Hotkey label={t("settings_hotkey_like")} value={config.hotkeyLike} onChange={(hotkeyLike) => setConfig({ hotkeyLike })} />
+      </Section>
+    </>
+  )
+}
+
+function Hotkey({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-6 border-b border-line py-3">
+      <span className="text-[14px]">{label}</span>
+      <Input className="w-[180px]" value={value} onChange={(event) => onChange(event.target.value)} />
+    </div>
+  )
+}
+
+function DriveSection() {
+  const app = useApp()
+  const t = useT()
+  const [status, setStatus] = useState<{ enabled: boolean; connected: boolean; pending: number } | null>(null)
+  const [note, setNote] = useState("")
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (!isTauri()) return
+    void invoke<{ enabled: boolean; connected: boolean; pending: number }>("drive_status")
+      .then(setStatus)
+      .catch(() => setStatus(null))
+  }, [])
+  const built = typeof __BOB_DRIVE__ !== "undefined" && __BOB_DRIVE__
+  if (!built && !status?.enabled) return null
+  return (
+    <Section title={t("settings_drive")}>
+      <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_drive_hint")}</p>
+      <p className="pb-3 text-[13px] text-muted">
+        {status?.connected ? t("settings_drive_connected") : ""}
+        {status ? ` · ${t("settings_drive_pending").replace("{n}", String(status.pending))}` : ""}
+      </p>
+      <div className="flex flex-wrap gap-2 pb-3">
+        <Button
+          disabled={busy}
+          onClick={() => {
+            setBusy(true)
+            setNote("")
+            void invoke<{ enabled: boolean; connected: boolean; pending: number }>("drive_connect")
+              .then((next) => {
+                setStatus(next)
+                setNote(t("settings_drive_connected"))
+              })
+              .catch((error: unknown) => setNote(error instanceof Error ? error.message : String(error)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          {t("settings_drive_in")}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => {
+            void invoke("drive_disconnect").then(() => setStatus((current) => (current ? { ...current, connected: false } : current)))
+          }}
+        >
+          {t("settings_drive_out")}
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={!status?.connected}
+          onClick={() => {
+            setBusy(true)
+            void invoke<number>("drive_upload_library")
+              .then((count) => setNote(t("settings_drive_pending").replace("{n}", String(count))))
+              .catch((error: unknown) => setNote(error instanceof Error ? error.message : String(error)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          {t("settings_drive_library")}
+        </Button>
+      </div>
+      <Row label={t("settings_drive_only")} hint={t("settings_drive_only_hint")}>
+        <Switch label={t("settings_drive_only")} checked={app.config.driveOnly} onCheckedChange={(value) => setConfig({ driveOnly: value })} />
+      </Row>
+      {note ? <p className="py-2 text-[13px] text-muted">{note}</p> : null}
+    </Section>
   )
 }
 

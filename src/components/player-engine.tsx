@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
-import { isTauri } from "../lib/api"
+import { invoke, isTauri } from "../lib/api"
+import { applyLibrarySnapshot, librarySnapshot, onLibrarySync } from "../lib/music"
 import { attachMedia, getPlayer, seek, systemControl, togglePlayback } from "../lib/player"
 
 function typingTarget(target: EventTarget | null) {
@@ -60,6 +61,49 @@ export function PlayerEngine() {
     )
     return () => {
       alive = false
+      stop()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let stop = () => {}
+    let alive = true
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<string>("player-hotkey", (event) => systemControl(event.payload)).then((unlisten) => {
+        if (alive) stop = unlisten
+        else unlisten()
+      }),
+    )
+    return () => {
+      alive = false
+      stop()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let timer = 0
+    const stop = onLibrarySync(() => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        void invoke("drive_push_state", { json: JSON.stringify(librarySnapshot()) }).catch(() => {})
+      }, 1500)
+    })
+    void invoke<string | null>("drive_pull_state")
+      .then((json) => {
+        if (!json) return
+        try {
+          const remote = JSON.parse(json) as { updatedAt?: number }
+          const local = librarySnapshot()
+          if ((remote.updatedAt ?? 0) > local.updatedAt) applyLibrarySnapshot(json)
+        } catch {
+          /* a foreign file in the app folder stays untouched */
+        }
+      })
+      .catch(() => {})
+    return () => {
+      window.clearTimeout(timer)
       stop()
     }
   }, [])

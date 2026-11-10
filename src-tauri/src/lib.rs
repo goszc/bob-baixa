@@ -1,3 +1,5 @@
+mod drive;
+mod enrich;
 mod hidden;
 mod media_session;
 mod playback;
@@ -237,9 +239,9 @@ pub fn run() {
         }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        runtime::hotkey(app);
+                        runtime::on_global_shortcut(app, &shortcut.to_string());
                     }
                 })
                 .build(),
@@ -281,8 +283,24 @@ pub fn run() {
             ack_whats_new,
             playback::inspect_media,
             playback::load_lyrics,
+            playback::search_lyrics,
             playback::scan_library,
             playback::delete_library_track,
+            enrich::search_library_lyrics,
+            enrich::pin_lyrics,
+            enrich::preview_tags,
+            enrich::apply_tags,
+            enrich::library_issues,
+            enrich::start_economic,
+            enrich::cancel_economic,
+            enrich::translate_lines,
+            drive::drive_status,
+            drive::drive_connect,
+            drive::drive_disconnect,
+            drive::drive_tracks,
+            drive::drive_upload_library,
+            drive::drive_push_state,
+            drive::drive_pull_state,
             set_now_playing
         ])
         .run(tauri::generate_context!())

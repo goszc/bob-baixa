@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "bob baixa",
   "mainBinaryName": "bob-baixa",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "identifier": "com.bobbaixa.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -34,7 +34,7 @@
         "style-src": "'self' 'unsafe-inline'",
         "font-src": "'self' data:",
         "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost http://127.0.0.1:* https:",
-        "media-src": "'self' asset: http://asset.localhost https://asset.localhost blob: data:"
+        "media-src": "'self' asset: http://asset.localhost https://asset.localhost blob: data: http://127.0.0.1:47821"
       },
       "assetProtocol": {
         "enable": true,

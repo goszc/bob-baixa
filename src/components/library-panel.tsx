@@ -25,17 +25,20 @@ import {
 import { clearPlayback, playTracks, queueTracks } from "../lib/player"
 import { requestDeleteTrack, useT } from "../store"
 import { cn } from "../lib/cn"
+import { CarePanel, MixList } from "./library-care"
 import { Retrospective } from "./retrospective"
 import { Input } from "./ui/input"
 
-const VIEWS: { value: LibraryView; key: "player_tracks" | "player_artists" | "player_albums" | "player_folders" | "player_playlists" | "player_likes" | "player_recent" | "player_retro" }[] = [
+const VIEWS: { value: LibraryView; key: "player_tracks" | "player_artists" | "player_albums" | "player_folders" | "player_playlists" | "player_likes" | "player_recent" | "player_retro" | "player_mix" | "player_care" }[] = [
   { value: "tracks", key: "player_tracks" },
+  { value: "mix", key: "player_mix" },
   { value: "artists", key: "player_artists" },
   { value: "albums", key: "player_albums" },
   { value: "folders", key: "player_folders" },
   { value: "playlists", key: "player_playlists" },
   { value: "likes", key: "player_likes" },
   { value: "recent", key: "player_recent" },
+  { value: "care", key: "player_care" },
   { value: "retro", key: "player_retro" },
 ]
 
@@ -138,6 +141,8 @@ export function LibraryPanel({
       ) : null}
       <div className="min-h-0 flex-1 space-y-1 overflow-auto pb-4">
         {music.view === "retro" ? <Retrospective /> : null}
+        {music.view === "mix" ? <MixList tracks={filtered} /> : null}
+        {music.view === "care" ? <CarePanel tracks={tracks} /> : null}
         {music.view === "tracks" ? (
           filtered.length ? (
             filtered.map((track, index) => (

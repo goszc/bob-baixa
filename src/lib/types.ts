@@ -66,6 +66,14 @@ export interface Config {
   contextMenu: boolean
   presets: DownloadPreset[]
   seenVersion: string
+  acoustidKey: string
+  translateLang: string
+  grabLyrics: boolean
+  driveOnly: boolean
+  hotkeyPlay: string
+  hotkeyNext: string
+  hotkeyPrev: string
+  hotkeyLike: string
 }
 
 export interface DownloadPreset {
@@ -241,4 +249,12 @@ export const defaultConfig: Config = {
   contextMenu: false,
   presets: [],
   seenVersion: "",
+  acoustidKey: "",
+  translateLang: "pt",
+  grabLyrics: true,
+  driveOnly: false,
+  hotkeyPlay: "ctrl+alt+p",
+  hotkeyNext: "ctrl+alt+right",
+  hotkeyPrev: "ctrl+alt+left",
+  hotkeyLike: "ctrl+alt+l",
 }

@@ -47,7 +47,11 @@ claro, escuro, vidro claro e vidro escuro. **seguir o windows** acompanha o modo
 - converter um arquivo que já está no computador
 - monitorar canais e playlists e baixar vídeos novos
 - histórico
-- player para o que já foi baixado. toca o áudio e o vídeo que estão no disco, sem transmitir o youtube. as letras vêm do arquivo, de um `.lrc` ao lado ou do [lrclib](https://lrclib.net)
+- player para o que já foi baixado. toca o áudio e o vídeo que estão no disco, sem transmitir o youtube. as letras vêm do arquivo, de um `.lrc` ao lado, do youtube (legenda manual) ou de lrcmux, karalyr, lrclib e lyrics.ovh
+- em configurações, a chave do [acoustid](https://acoustid.org/new-application) melhora o nome da faixa, a capa e a letra. sem a chave, o app ainda consulta o musicbrainz pelo título. o pedido fica em um por segundo
+- equalizador, karaokê, tradução da letra, mix do dia e cuidados da biblioteca (busca na letra, duplicatas, tags e modo econômico em lote)
+- atalhos globais, configuráveis: tocar ou pausar, próxima, anterior e curtir. o `ctrl+shift+b` continua pegando o link copiado
+- google drive, quando a compilação inclui o cliente: **entrar com google** em configurações. nada para colar. as faixas sobem para `bob baixa` e tocam de lá. se o botão não aparecer, essa compilação saiu sem o cliente
 - legendas, miniatura, metadados, capítulos e sponsorblock
 - pasta de destino, modelo do nome e configuração gravada
 - cookies em **auto**: se o vídeo pedir login, tenta de novo com o navegador instalado. se o banco de cookies travar, feche o navegador
@@ -88,11 +92,13 @@ a chave pública está em `packaging/updater.pub`. a chave privada não entra no
 2. **settings** → **secrets and variables** → **actions** → **new repository secret**
 3. nome: `TAURI_SIGNING_PRIVATE_KEY`
 4. valor: o conteúdo inteiro do arquivo da chave privada (uma linha começando com `dW50cnVzdGVkIGNvbW1lbnQ6`)
-5. suba a versão em `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` e no `DisplayVersion` de `packaging/bob-baixa.nsi`
+5. suba a versão em `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `crates/bob-core/Cargo.toml` e no `DisplayVersion` de `packaging/bob-baixa.nsi`
 6. escreva a seção dessa versão no `CHANGELOG.md` (o título é `## 0.2.0`, por exemplo)
 7. envie uma tag `v0.2.0` (ou a próxima). o workflow `.github/workflows/windows.yml` gera o instalador num runner windows, assina com `tauri signer sign`, usa a seção do changelog como texto da release e como `notes` do `latest.json`, e publica `bob-baixa-setup.exe` e `latest.json`
 
 sem esse segredo, o workflow ainda gera o instalador, mas não publica o manifesto assinado. uma atualização sem assinatura válida é ignorada.
+
+o botão **entrar com google** só existe se a compilação recebeu `BOB_GOOGLE_CLIENT_ID` e `BOB_GOOGLE_CLIENT_SECRET` (segredos do actions com esses nomes, cliente oauth desktop do app, escopo `drive.file`). quem usa o programa não cria cliente nem cola id. sem os dois segredos o instalador sai normal e o drive fica escondido.
 
 ## compilar
 

@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from "react"
 import { invoke, isTauri } from "./api"
 import { trackKey, type Track } from "./library"
-import { clearSleep, flushHear, getMusic, hear, onAudioPref, rememberPosition, rememberSession, resumeFor, touchRecent } from "./music"
+import { EQ_BANDS, eqIsFlat } from "./eq"
+import { activeEq, clearSleep, flushHear, getMusic, hear, onAudioPref, rememberPosition, rememberSession, resumeFor, toggleLike, touchRecent } from "./music"
 
 export type RepeatMode = "off" | "all" | "one"
 export type PlayerPanel = "library" | "queue" | "lyrics"
@@ -132,6 +133,7 @@ let gainA: GainNode | null = null
 let gainB: GainNode | null = null
 let master: GainNode | null = null
 let compressor: DynamicsCompressorNode | null = null
+let filters: BiquadFilterNode[] = []
 let fading = false
 let fadeToken = 0
 let lastListenAt = 0
@@ -277,15 +279,40 @@ function ensureGraph() {
   applyVolume()
 }
 
+function ensureFilters() {
+  if (!audioCtx || filters.length === EQ_BANDS.length) return
+  filters = EQ_BANDS.map((frequency, index) => {
+    const filter = audioCtx!.createBiquadFilter()
+    filter.type = index === 0 ? "lowshelf" : index === EQ_BANDS.length - 1 ? "highshelf" : "peaking"
+    filter.frequency.value = frequency
+    filter.Q.value = 1
+    filter.gain.value = 0
+    return filter
+  })
+}
+
 function routeMaster() {
   if (!wired || !master || !audioCtx || !compressor) return
   master.disconnect()
   compressor.disconnect()
+  for (const filter of filters) filter.disconnect()
+  const bands = activeEq(currentTrack()?.path).bands
+  const flat = eqIsFlat(bands)
+  let tail: AudioNode = master
+  if (!flat) {
+    ensureFilters()
+    filters.forEach((filter, index) => {
+      filter.gain.value = bands[index] ?? 0
+    })
+    master.connect(filters[0])
+    for (let index = 0; index < filters.length - 1; index += 1) filters[index].connect(filters[index + 1])
+    tail = filters[filters.length - 1]
+  }
   if (getMusic().normalize) {
-    master.connect(compressor)
+    tail.connect(compressor)
     compressor.connect(audioCtx.destination)
   } else {
-    master.connect(audioCtx.destination)
+    tail.connect(audioCtx.destination)
   }
 }
 
@@ -337,6 +364,11 @@ export function systemControl(action: string) {
   }
   if (action === "pause") {
     if (player.playing) togglePlayback()
+    return
+  }
+  if (action === "like") {
+    const track = currentTrack()
+    if (track) toggleLike(track.path)
     return
   }
   togglePlayback()
@@ -508,6 +540,12 @@ async function resolveSource(track: Track): Promise<{ src: string; info?: MediaI
   }
 }
 
+export function reloadLyrics() {
+  const track = currentTrack()
+  if (!track) return
+  void loadLyrics(generation, track)
+}
+
 async function loadLyrics(mine: number, track: Track, info?: MediaInspect) {
   setPlayer({ lyricsState: "loading", lyrics: null })
   if (!isTauri()) {
@@ -583,7 +621,7 @@ async function load(index: number, autoplay = true) {
     return
   }
   const kind: PlaybackKind = source.info?.kind === "video" || source.info?.kind === "audio" ? source.info.kind : track.kind
-  if (kind === "audio" && (getMusic().crossfade > 0 || getMusic().normalize)) ensureGraph()
+  if (kind === "audio" && (getMusic().crossfade > 0 || getMusic().normalize || !eqIsFlat(activeEq(track.path).bands))) ensureGraph()
   void audioCtx?.resume()
   const element = kind === "video" ? video : audio
   const other = kind === "video" ? audio : video
