@@ -846,6 +846,9 @@ fn upload_with(item: &Upload, file: &Path, token: &str) -> Result<String, String
     };
     let cover_id = upload_cover(token, file, &parent, &id, &name);
     drive_play::snapshot_local(file, &id, &parent, &name, &item.title, &item.artist, &item.album, item.video, &lyrics_id, &cover_id);
+    if let Ok(dir) = root_dir().lock() {
+        crate::loudness::alias_gain(&dir, &file.to_string_lossy(), &format!("drive:{id}"));
+    }
     Ok(id)
 }
 
@@ -1355,6 +1358,31 @@ fn file_label(path: &str) -> String {
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| path.to_string())
+}
+
+pub fn queue_report() -> String {
+    let Ok(queue) = queue_lock().lock() else {
+        return "fila de envio indisponível".into();
+    };
+    if queue.is_empty() {
+        return "fila de envio vazia".into();
+    }
+    queue
+        .iter()
+        .map(|item| {
+            format!(
+                "{} | {} | {} | tentativas {} | enviados {}/{} | {}",
+                file_label(&item.path),
+                if item.phase.is_empty() { "aguardando" } else { item.phase.as_str() },
+                item.title,
+                item.attempts,
+                item.sent,
+                item.total,
+                item.error
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn log_path() -> PathBuf {

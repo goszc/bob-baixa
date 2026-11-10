@@ -9,7 +9,7 @@ import type { Key } from "../lib/i18n"
 import { cn } from "../lib/cn"
 import { invoke, isTauri } from "../lib/api"
 import type { CookiesBrowser, Lang, ThemeMode } from "../lib/types"
-import { checkUpdates, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
+import { checkUpdates, makeDiagnostic, measureLibrary, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
 
 const CATS: { id: string; key: Key }[] = [
   { id: "sponsor", key: "cat_sponsor" },
@@ -180,11 +180,44 @@ export function Settings() {
           <Button variant="ghost" disabled={app.busy === "tools"} onClick={() => void reinstallTools()}>
             {t("reinstall_tools")}
           </Button>
+          <Button variant="outline" disabled={app.busy === "tools"} onClick={() => void makeDiagnostic()}>
+            {t("settings_diagnostic")}
+          </Button>
+        </div>
+        <p className="pb-3 text-[13px] leading-relaxed text-muted">{t("settings_diagnostic_hint")}</p>
+        <div className="pb-4">
+          <Button variant="ghost" disabled={app.busy === "tools"} onClick={() => void measureLibrary()}>
+            {t("settings_gain")}
+          </Button>
+          <p className="mt-2 text-[13px] leading-relaxed text-muted">{t("player_normalize_lufs")}</p>
         </div>
         {app.tools.message ? <p className="pb-3 text-[13px] text-danger">{app.tools.message}</p> : null}
       </Section>
       <LibrarySection />
       <DriveSection />
+      <Section title={t("settings_gemini")}>
+        <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_gemini_hint")}</p>
+        <Input value={config.geminiKey} placeholder={t("settings_gemini_key")} onChange={(event) => setConfig({ geminiKey: event.target.value })} />
+        <div className="mt-3 grid gap-3">
+          <Input value={config.geminiFlash} onChange={(event) => setConfig({ geminiFlash: event.target.value })} />
+          <Input value={config.geminiFlashFallback} onChange={(event) => setConfig({ geminiFlashFallback: event.target.value })} />
+          <Input value={config.geminiBulk} onChange={(event) => setConfig({ geminiBulk: event.target.value })} />
+          <Input value={config.geminiEmbed} onChange={(event) => setConfig({ geminiEmbed: event.target.value })} />
+          <Input value={config.geminiTranscribe} onChange={(event) => setConfig({ geminiTranscribe: event.target.value })} />
+        </div>
+        <div className="py-3">
+          <Row label={t("settings_gemini_auto")}>
+            <Switch label={t("settings_gemini_auto")} checked={config.geminiAutoLyrics} onCheckedChange={(value) => setConfig({ geminiAutoLyrics: value })} />
+          </Row>
+        </div>
+      </Section>
+      <Section title={t("settings_discord")}>
+        <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_discord_hint")}</p>
+        <Row label={t("settings_discord")}>
+          <Switch label={t("settings_discord")} checked={config.discord} onCheckedChange={(value) => setConfig({ discord: value })} />
+        </Row>
+        <Input className="mt-3" value={config.discordClientId} placeholder={t("settings_discord_id")} onChange={(event) => setConfig({ discordClientId: event.target.value })} />
+      </Section>
       <Section title={t("about")}>
         <p className="py-3 text-[14px]">bob baixa · {t("version")}</p>
         <div className="pb-4">

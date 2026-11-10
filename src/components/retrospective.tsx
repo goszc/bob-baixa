@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { invoke, isTauri } from "../lib/api"
 import type { RetroRange } from "../lib/listening"
 import { retrospective } from "../lib/listening"
 import { useMusic } from "../lib/music"
@@ -20,6 +21,7 @@ export function Retrospective() {
   const music = useMusic()
   const t = useT()
   const [range, setRange] = useState<RetroRange>("week")
+  const [wrapped, setWrapped] = useState("")
   const summary = useMemo(() => retrospective(music.events, range, Date.now()), [music.events, range])
   const top = Math.max(summary.tracks[0]?.ms ?? 0, summary.artists[0]?.ms ?? 0, 1)
   return (
@@ -42,6 +44,22 @@ export function Retrospective() {
         <Stat label={t("retro_streak")} value={t("retro_streak_days", { n: summary.currentStreak })} />
         <Stat label={t("retro_best")} value={t("retro_streak_days", { n: summary.periodStreak })} />
       </div>
+      <button
+        type="button"
+        className="mt-3 text-left text-[13px] text-muted hover:text-ink"
+        onClick={() => {
+          if (!isTauri()) return
+          void invoke<string>("ai_wrapped", {
+            period: range,
+            minutes: summary.minutes,
+            artist: summary.artists[0]?.label ?? "",
+            track: summary.tracks[0]?.label ?? "",
+          }).then(setWrapped)
+        }}
+      >
+        {t("retro_wrapped")}
+      </button>
+      {wrapped ? <p className="mt-3 text-[15px] leading-relaxed">{wrapped}</p> : null}
       {summary.tracks.length === 0 && summary.artists.length === 0 ? (
         <p className="px-1 py-8 text-[14px] leading-relaxed text-muted">{t("retro_empty")}</p>
       ) : (

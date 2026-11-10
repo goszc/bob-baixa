@@ -8,13 +8,17 @@ import { Monitor } from "./pages/monitor"
 import { Queue } from "./pages/queue"
 import { Search } from "./pages/search"
 import { Settings } from "./pages/settings"
+import { MiniPlayer } from "./components/mini-player"
 import { initApp, useApp } from "./store"
+
+const miniWindow = new URLSearchParams(window.location.search).get("mini") === "1"
 
 export default function App() {
   const page = useApp().page
   useEffect(() => {
-    initApp()
+    if (!miniWindow) initApp()
   }, [])
+  if (miniWindow) return <MiniPlayer />
   return (
     <Shell>
       {page === "home" && <Home />}

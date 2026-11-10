@@ -81,7 +81,7 @@ function load(): MusicState {
       resume: parsed.resume && typeof parsed.resume === "object" ? parsed.resume : {},
       recent: Array.isArray(parsed.recent) ? parsed.recent : [],
       events: Array.isArray(parsed.events) ? parsed.events.slice(-4000) : [],
-      crossfade: parsed.crossfade === 2 || parsed.crossfade === 3 ? parsed.crossfade : 0,
+      crossfade: typeof parsed.crossfade === "number" ? Math.min(12, Math.max(0, Math.round(parsed.crossfade))) : 0,
       normalize: Boolean(parsed.normalize),
       view: parsed.view ?? "tracks",
       updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
@@ -202,7 +202,7 @@ export function setView(view: LibraryView) {
 }
 
 export function setCrossfade(seconds: number) {
-  const crossfade = seconds === 2 || seconds === 3 ? seconds : 0
+  const crossfade = Math.min(12, Math.max(0, Math.round(seconds)))
   state = { ...state, crossfade }
   persist()
   prefHook?.()

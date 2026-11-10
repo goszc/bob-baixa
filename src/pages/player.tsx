@@ -115,6 +115,7 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
   const [translated, setTranslated] = useState<string[] | null>(null)
   const [translateNote, setTranslateNote] = useState("")
   const lyrics = player.lyrics
+  const playing = currentTrack()
   const synced = Boolean(lyrics?.synced)
   const current = synced && lyrics ? activeLine(lyrics.lines, time) : -1
 
@@ -155,7 +156,18 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
       {player.error ? <p className="px-3 py-10 text-[14px] text-danger">{t(player.error === "missing" ? "player_missing" : "player_failed")}</p> : null}
       {!player.error && player.lyricsState !== "loading" && (!lyrics || lyrics.instrumental || !lines.length) ? (
         <div className="px-3 py-6">
-          <p className="text-[14px] text-muted">{t(lyrics?.instrumental ? "lyrics_instrumental" : "lyrics_empty")}</p>
+          <p className="text-[14px] text-muted">{t(lyrics?.instrumental ? "lyrics_instrumental" : lyrics?.source === "ai" ? "lyrics_ai_mark" : "lyrics_empty")}</p>
+          {playing ? (
+            <button
+              type="button"
+              className="mt-3 text-[13px] text-muted hover:text-ink"
+              onClick={() => {
+                void invoke("ai_transcribe", { path: playing.path }).then(() => reloadLyrics())
+              }}
+            >
+              {t("lyrics_ai")}
+            </button>
+          ) : null}
           {lyrics?.tried?.length ? (
             <ul className="mt-3 space-y-1 text-[12px] text-muted">
               {lyrics.tried.map((query) => (
@@ -296,6 +308,9 @@ export function Player() {
             </div>
             <button type="button" className="text-[12px] text-muted hover:text-ink" onClick={() => setEqOpen(true)}>
               {t("eq_title")}
+            </button>
+            <button type="button" className="text-[12px] text-muted hover:text-ink" onClick={() => void invoke("open_mini")}>
+              {t("player_mini")}
             </button>
           </div>
         </div>

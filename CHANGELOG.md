@@ -1,5 +1,15 @@
 # changelog
 
+## 0.6.0
+
+- o campo baixar aceita link e uri do spotify (faixa, álbum, playlist, com `?si=`). a metadata pública vira uma lista com caixa de seleção, o download sai no modo econômico e a tag do spotify entra no arquivo. o que não casou no youtube music aparece embaixo
+- sem letra em lugar nenhum, dá pra transcrever com o gemini (`gemini-3.5-transcribe`, 25 por dia) num `.lrc` marcado como gerada por ia. também dá pra ligar isso com um limite diário
+- a retrospectiva ganha um texto no estilo wrapped. a busca por descrição usa embeddings e a letra. o gemini tem chave nas configurações, contador por modelo e cai na regra antiga quando estoura
+- o ffmpeg mede o volume (ebu r128) na hora do download e a reprodução aplica. dá pra medir a biblioteca que já existe
+- o crossfade vai de 0 a 12 segundos e 0 continua colado. o timer de dormir abaixa o volume até o fim
+- o discord, no windows, mostra “ouvindo a faixa no bob baixa” pelo pipe. o mini player é uma janela pequena sempre por cima, com capa, a linha da letra e os controles
+- gerar diagnóstico, nas configurações, faz um zip na área de trabalho sem chave nem token e abre o explorador com o arquivo selecionado
+
 ## 0.5.4
 
 - um mp4 que ficou só no drive toca o vídeo na capa, em vez de um quadrado cinza. o proxy encaminha o range e responde na hora, com um cache pequeno no disco

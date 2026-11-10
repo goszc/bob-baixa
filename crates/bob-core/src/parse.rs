@@ -15,10 +15,13 @@ pub fn extract_urls(text: &str) -> Vec<String> {
     let mut urls = Vec::new();
     for token in text.split_whitespace() {
         let token = token.trim_matches(|c: char| "<>\"'()[]{},;".contains(c));
-        if !(token.starts_with("http://") || token.starts_with("https://")) {
+        let url = if let Some(link) = crate::parse_spotify(token) {
+            crate::canonical(&link)
+        } else if token.starts_with("http://") || token.starts_with("https://") {
+            token.trim_end_matches(['.', ',', ';', ')']).to_string()
+        } else {
             continue;
-        }
-        let url = token.trim_end_matches(['.', ',', ';', ')']).to_string();
+        };
         if !urls.iter().any(|existing| existing == &url) {
             urls.push(url);
         }
@@ -488,6 +491,7 @@ fn playlist_item(value: &Value, source_url: &str) -> MediaItem {
         view_count: None,
         formats: Vec::new(),
         entries,
+        unmatched: Vec::new(),
     }
 }
 
@@ -503,6 +507,7 @@ fn video_item(value: &Value, source_url: &str) -> MediaItem {
         view_count: value.get("view_count").and_then(Value::as_u64),
         formats: formats_of(value),
         entries: Vec::new(),
+        unmatched: Vec::new(),
     }
 }
 
@@ -518,6 +523,10 @@ fn playlist_entry(entry: &Value, source_url: &str) -> Option<PlaylistEntry> {
         url,
         duration: entry.get("duration").and_then(Value::as_f64),
         thumbnail: thumb(entry),
+        artist: String::new(),
+        album: String::new(),
+        track: 0,
+        cover: String::new(),
     })
 }
 
