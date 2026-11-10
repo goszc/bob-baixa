@@ -74,15 +74,16 @@ export async function refreshCatalog(dir?: string, liveDir?: () => string) {
     if (liveDir && trackKey(liveDir()) !== trackKey(outputDir)) return
     disk = files
     try {
-      const drive = await invoke<Array<{ id: string; path: string; title: string; artist: string; album: string; duration?: number | null; kind: string; size: number }>>("drive_tracks")
+      const drive = await invoke<Array<{ id: string; path: string; title: string; artist: string; album: string; duration?: number | null; kind: string; size: number; name?: string; cover?: string }>>("drive_tracks")
       remoteTracks = drive.map((file) => ({
         id: file.id,
         path: file.path,
-        title: file.title || file.path,
+        title: file.title || file.name || file.path,
         artist: file.artist || "",
         album: file.album || "",
         folder: "drive",
-        pageUrl: "",
+        pageUrl: file.name || file.title || "",
+        thumbnail: file.cover || undefined,
         duration: file.duration ?? undefined,
         kind: file.kind === "video" ? "video" : "audio",
         size: file.size,

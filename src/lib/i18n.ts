@@ -222,6 +222,7 @@ const pt = {
   player_filter: "filtrar",
   lyrics_loading: "buscando letras…",
   lyrics_empty: "letras indisponíveis.",
+  lyrics_tried: "busquei: {query}",
   lyrics_instrumental: "instrumental, sem letra.",
   lyrics_source_embedded: "no arquivo",
   lyrics_source_file: "arquivo .lrc",
@@ -371,6 +372,9 @@ const pt = {
   settings_drive_retry: "tentar de novo",
   settings_drive_log: "abrir o registro",
   settings_drive_quota: "{used} de {limit}",
+  settings_drive_repair: "reparar biblioteca do drive",
+  settings_drive_repairing: "reparando a biblioteca do drive…",
+  settings_drive_repaired: "atualizei {tracks} faixas, {lyrics} letras e {covers} capas",
 } as const
 
 const en: Record<keyof typeof pt, string> = {
@@ -595,6 +599,7 @@ const en: Record<keyof typeof pt, string> = {
   player_filter: "filter",
   lyrics_loading: "looking up lyrics…",
   lyrics_empty: "lyrics unavailable.",
+  lyrics_tried: "searched: {query}",
   lyrics_instrumental: "instrumental, no lyrics.",
   lyrics_source_embedded: "in the file",
   lyrics_source_file: ".lrc file",
@@ -744,6 +749,9 @@ const en: Record<keyof typeof pt, string> = {
   settings_drive_retry: "try again",
   settings_drive_log: "open the log",
   settings_drive_quota: "{used} of {limit}",
+  settings_drive_repair: "repair the drive library",
+  settings_drive_repairing: "repairing the drive library…",
+  settings_drive_repaired: "updated {tracks} tracks, {lyrics} lyrics and {covers} covers",
 }
 
 export type Key = keyof typeof pt

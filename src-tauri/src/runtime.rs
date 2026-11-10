@@ -1876,6 +1876,38 @@ fn start_http(app: AppHandle) {
         for mut request in server.incoming_requests() {
             let method = request.method().as_str().to_string();
             let url = request.url().to_string();
+            if url.starts_with("/drive/") || url.starts_with("/cover/") {
+                if method == "OPTIONS" {
+                    let mut response = tiny_http::Response::from_string(String::new()).with_status_code(tiny_http::StatusCode(204));
+                    for (name, value) in crate::drive::cors() {
+                        if let Ok(header) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+                            response.add_header(header);
+                        }
+                    }
+                    let _ = request.respond(response);
+                    continue;
+                }
+            }
+            if method == "GET" && url.starts_with("/cover/") {
+                let id = url.trim_start_matches("/cover/").split(['?', '#']).next().unwrap_or("");
+                if let Some(path) = crate::drive::cover_file(id) {
+                    if let Ok(file) = std::fs::File::open(&path) {
+                        let length = file.metadata().ok().map(|meta| meta.len() as usize);
+                        let mut headers = Vec::new();
+                        for (name, value) in crate::drive::cors() {
+                            if let Ok(header) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+                                headers.push(header);
+                            }
+                        }
+                        if let Ok(header) = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"image/jpeg"[..]) {
+                            headers.push(header);
+                        }
+                        let response = tiny_http::Response::new(tiny_http::StatusCode(200), headers, file, length, None);
+                        let _ = request.respond(response);
+                        continue;
+                    }
+                }
+            }
             if method == "GET" && url.starts_with("/drive/") {
                 let id = url.trim_start_matches("/drive/");
                 let range = request.headers().iter().find_map(|header| {
@@ -1884,14 +1916,27 @@ fn start_http(app: AppHandle) {
                         .equiv("Range")
                         .then(|| header.value.as_str().to_string())
                 });
-                let (status, headers, bytes) = crate::drive::proxy(id, range.as_deref());
-                let mut response = tiny_http::Response::from_data(bytes).with_status_code(tiny_http::StatusCode(status));
-                for (name, value) in headers {
-                    if let Ok(header) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
-                        response.add_header(header);
+                match crate::drive::open_media(id, range.as_deref()) {
+                    Ok(stream) => {
+                        let mut headers = Vec::new();
+                        for (name, value) in stream.headers {
+                            if let Ok(header) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+                                headers.push(header);
+                            }
+                        }
+                        let response = tiny_http::Response::new(
+                            tiny_http::StatusCode(stream.status),
+                            headers,
+                            stream.body,
+                            stream.length,
+                            None,
+                        );
+                        let _ = request.respond(response);
+                    }
+                    Err(message) => {
+                        let _ = request.respond(tiny_http::Response::from_string(message).with_status_code(tiny_http::StatusCode(502)));
                     }
                 }
-                let _ = request.respond(response);
                 continue;
             }
             let mut body = String::new();

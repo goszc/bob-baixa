@@ -21,6 +21,9 @@ pub struct ResolvedLyrics {
     pub instrumental: bool,
     pub lines: Vec<LyricLine>,
     pub plain: String,
+    /// Queries the player tried when nothing was found.
+    #[serde(default)]
+    pub tried: Vec<String>,
 }
 
 impl ResolvedLyrics {
@@ -31,6 +34,7 @@ impl ResolvedLyrics {
             instrumental: false,
             lines: Vec::new(),
             plain: String::new(),
+            tried: Vec::new(),
         }
     }
 
@@ -126,6 +130,7 @@ pub fn resolve_lyrics(input: LyricInputs<'_>) -> ResolvedLyrics {
             instrumental: true,
             lines: Vec::new(),
             plain: String::new(),
+            tried: Vec::new(),
         };
     }
     if let Some(text) = remote_synced {
@@ -340,12 +345,46 @@ pub fn clean_track_query(title: &str) -> String {
     if title.is_empty() {
         return title;
     }
+    title = strip_media_extension(&title);
+    title = strip_bracket_ids(&title);
     title = strip_feat_clauses(&title);
     title = strip_pipe_noise(&title);
     title = strip_wrapped_noise(&title);
     title = strip_bare_suffix(&title);
     title = strip_wrapped_noise(&title);
+    title = strip_bracket_ids(&title);
     collapse_spaces(title.trim())
+}
+
+fn strip_media_extension(title: &str) -> String {
+    let lower = title.to_ascii_lowercase();
+    const EXTS: &[&str] = &[".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi", ".mp3", ".m4a", ".flac", ".opus", ".ogg", ".wav"];
+    for ext in EXTS {
+        if lower.ends_with(ext) && title.len() > ext.len() {
+            return title[..title.len() - ext.len()].trim().to_string();
+        }
+    }
+    title.to_string()
+}
+
+fn strip_bracket_ids(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '[' {
+            if let Some(rel) = chars[index + 1..].iter().position(|ch| *ch == ']') {
+                let inner: String = chars[index + 1..index + 1 + rel].iter().collect();
+                if is_youtube_id(inner.trim()) {
+                    index += rel + 2;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[index]);
+        index += 1;
+    }
+    collapse_spaces(out.trim())
 }
 
 /// Channel names like `Banda - Topic` or `Banda VEVO` become `Banda`.
@@ -724,6 +763,7 @@ fn from_text(text: &str, source: &str) -> ResolvedLyrics {
             instrumental: false,
             lines: parsed.lines,
             plain,
+            tried: Vec::new(),
         };
     }
     let lines = text
@@ -746,6 +786,7 @@ fn from_text(text: &str, source: &str) -> ResolvedLyrics {
         instrumental: false,
         lines,
         plain,
+        tried: Vec::new(),
     }
 }
 
@@ -1347,6 +1388,21 @@ mod tests {
         assert_eq!(clean_track_query("Canção lyrics"), "Canção");
         assert_eq!(clean_artist_query("Banda - Topic"), "Banda");
         assert_eq!(clean_artist_query("Banda VEVO"), "Banda");
+        let raw = "Disappeared Completely - No Place for Me (Pt.1) - Official Video [x0NpAqKoHv4].mp4";
+        let (artist, title) = split_artist_title(raw);
+        assert_eq!(artist, "Disappeared Completely");
+        assert_eq!(clean_track_query(&title), "No Place for Me (Pt.1)");
+        let query = LrclibQuery {
+            track_name: clean_track_query(&title),
+            artist_name: artist,
+            album_name: String::new(),
+            duration: Some(210),
+        };
+        let variants = crate::lyrics_variants(&query);
+        assert!(variants.iter().any(|item| item.track_name == "No Place for Me (Pt.1)"));
+        assert!(variants.iter().any(|item| item.track_name == "No Place for Me"));
+        let tried = crate::query_attempts(&variants);
+        assert!(tried.iter().any(|item| item.contains("No Place for Me") && !item.contains("Pt.1")));
     }
 
     #[test]

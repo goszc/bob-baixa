@@ -154,7 +154,16 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
       {player.lyricsState === "loading" ? <p className="px-3 py-10 text-[14px] text-muted">{t("lyrics_loading")}</p> : null}
       {player.error ? <p className="px-3 py-10 text-[14px] text-danger">{t(player.error === "missing" ? "player_missing" : "player_failed")}</p> : null}
       {!player.error && player.lyricsState !== "loading" && (!lyrics || lyrics.instrumental || !lines.length) ? (
-        <p className="px-3 py-6 text-[14px] text-muted">{t(lyrics?.instrumental ? "lyrics_instrumental" : "lyrics_empty")}</p>
+        <div className="px-3 py-6">
+          <p className="text-[14px] text-muted">{t(lyrics?.instrumental ? "lyrics_instrumental" : "lyrics_empty")}</p>
+          {lyrics?.tried?.length ? (
+            <ul className="mt-3 space-y-1 text-[12px] text-muted">
+              {lyrics.tried.map((query) => (
+                <li key={query}>{t("lyrics_tried").replace("{query}", query)}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
       {source ? <p className="px-3 pb-2 text-[12px] text-muted">{t(source)}</p> : null}
       {translateNote ? <p className="px-3 pb-2 text-[12px] text-muted">{translateNote}</p> : null}
@@ -227,7 +236,7 @@ export function Player() {
             {showVideo ? (
               <div ref={setVideoSlot} className="absolute inset-0 bg-black" />
             ) : (
-              <Thumb src={track?.thumbnail} videoUrl={track?.pageUrl} className="absolute inset-0 h-full w-full rounded-none" />
+              <Thumb src={track?.thumbnail} videoUrl={track?.pageUrl || track?.title || track?.path} className="absolute inset-0 h-full w-full rounded-none" />
             )}
           </div>
           <p className="mt-6 text-[12px] text-muted">{t("player_now")}</p>

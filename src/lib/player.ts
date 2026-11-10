@@ -19,6 +19,7 @@ export interface TrackLyrics {
   instrumental: boolean
   lines: LyricLine[]
   plain: string
+  tried?: string[]
 }
 
 export interface MediaInspect {
@@ -29,6 +30,7 @@ export interface MediaInspect {
   album: string
   duration?: number | null
   src: string
+  cover?: string
 }
 
 export interface PlayerMeta {
@@ -71,7 +73,7 @@ const sampleLyrics: TrackLyrics = {
 }
 
 function emptyLyrics(): TrackLyrics {
-  return { source: "none", synced: false, instrumental: false, lines: [], plain: "" }
+  return { source: "none", synced: false, instrumental: false, lines: [], plain: "", tried: [] }
 }
 
 function readVolume() {
@@ -561,7 +563,7 @@ async function loadLyrics(mine: number, track: Track, info?: MediaInspect) {
       path: track.path,
       title: info?.title || track.title,
       artist: info?.artist || track.artist,
-      duration: info?.duration ?? track.duration ?? null,
+      duration: info?.duration ?? track.duration ?? (player.duration > 0 ? player.duration : null),
     })
     if (mine !== generation) return
     setPlayer({ lyrics, lyricsState: "ready" })

@@ -24,20 +24,24 @@ pub struct MediaInspect {
     pub album: String,
     pub duration: Option<f64>,
     pub src: String,
+    #[serde(default)]
+    pub cover: String,
 }
 
 /// Inspect a file that was already downloaded. Nothing here talks to YouTube.
 #[tauri::command]
 pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaInspect, String> {
     if let Some(id) = path.strip_prefix("drive:") {
+        let record = crate::drive::describe_drive(id);
         return Ok(MediaInspect {
             exists: true,
-            kind: "audio".into(),
-            title: String::new(),
-            artist: String::new(),
-            album: String::new(),
-            duration: None,
+            kind: record.kind,
+            title: record.title,
+            artist: record.artist,
+            album: record.album,
+            duration: record.duration,
             src: format!("http://127.0.0.1:47821/drive/{id}"),
+            cover: record.cover,
         });
     }
     let file = PathBuf::from(&path);
@@ -51,6 +55,7 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
             album: String::new(),
             duration: None,
             src: String::new(),
+            cover: String::new(),
         });
     }
     app.asset_protocol_scope()
@@ -74,6 +79,7 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
         album: embedded.album.unwrap_or_default(),
         duration: embedded.duration,
         src,
+        cover: String::new(),
     })
 }
 
@@ -86,9 +92,21 @@ pub async fn load_lyrics(
     artist: String,
     duration: Option<f64>,
 ) -> Result<ResolvedLyrics, String> {
+    if let Some(id) = path.strip_prefix("drive:") {
+        if let Some(text) = crate::drive::lyrics_text(id) {
+            let local = resolve_lyrics(LyricInputs {
+                sibling: Some(&text),
+                ..LyricInputs::default()
+            });
+            if local.source != "none" {
+                return Ok(local);
+            }
+        }
+    }
     let file = PathBuf::from(&path);
     if !file.is_file() {
-        return Ok(ResolvedLyrics::empty());
+        let query = lyrics_query(&bob_core::EmbeddedMedia::default(), &title, &artist, duration);
+        return remote_lyrics(&app, query).await;
     }
     let file_for_read = file.clone();
     let (embedded, sibling) = tokio::task::spawn_blocking(move || {
@@ -118,20 +136,35 @@ pub async fn load_lyrics(
             query.album_name = identity.album;
         }
     }
+    remote_lyrics(&app, query).await
+}
+
+async fn remote_lyrics(app: &tauri::AppHandle, query: bob_core::LrclibQuery) -> Result<ResolvedLyrics, String> {
+    let variants = bob_core::lyrics_variants(&query);
+    let tried = bob_core::query_attempts(&variants);
     if query.track_name.trim().is_empty() {
-        return Ok(ResolvedLyrics::empty());
+        let mut empty = ResolvedLyrics::empty();
+        empty.tried = tried;
+        return Ok(empty);
     }
-    let cache_dir = lyrics_cache_dir(&app).await;
+    let cache_dir = lyrics_cache_dir(app).await;
     let key = lyrics_cache_key(&query);
     let now = chrono::Utc::now().timestamp();
     if let Some(entry) = read_lyrics_cache(&cache_dir, &key, now) {
-        return Ok(lyrics_from_cache(&entry));
+        let mut lyrics = lyrics_from_cache(&entry);
+        if lyrics.source == "none" || !lyrics.has_lines() {
+            lyrics.tried = tried.clone();
+        }
+        return Ok(lyrics);
     }
     let client = match lyrics_client() {
         Some(client) => client,
-        None => return Ok(ResolvedLyrics::empty()),
+        None => {
+            let mut empty = ResolvedLyrics::empty();
+            empty.tried = tried;
+            return Ok(empty);
+        }
     };
-    let variants = bob_core::lyrics_variants(&query);
     let mut chain = Chain::Miss;
     for (index, variant) in variants.iter().take(6).enumerate() {
         let step = if index == 0 {
@@ -166,10 +199,18 @@ pub async fn load_lyrics(
             plain: None,
             source: String::new(),
         },
-        Chain::Offline => return Ok(ResolvedLyrics::empty()),
+        Chain::Offline => {
+            let mut empty = ResolvedLyrics::empty();
+            empty.tried = tried;
+            return Ok(empty);
+        }
     };
     let _ = write_lyrics_cache(&cache_dir, &key, &entry);
-    Ok(lyrics_from_cache(&entry))
+    let mut lyrics = lyrics_from_cache(&entry);
+    if lyrics.source == "none" || !lyrics.has_lines() {
+        lyrics.tried = tried;
+    }
+    Ok(lyrics)
 }
 
 async fn lyrics_cache_dir(app: &tauri::AppHandle) -> PathBuf {

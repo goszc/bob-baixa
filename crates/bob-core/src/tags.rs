@@ -59,3 +59,25 @@ pub fn write_track_tags(
     file.save_to_path(path, WriteOptions::new())
         .map_err(|error| error.to_string())
 }
+
+/// Front cover embedded in the file, or the first picture if there is no front cover.
+pub fn embedded_cover(path: &Path) -> Option<Vec<u8>> {
+    use lofty::picture::PictureType;
+    use lofty::prelude::TaggedFileExt;
+    let tagged = lofty::read_from_path(path).ok()?;
+    let mut fallback = None;
+    for tag in tagged.tags() {
+        for picture in tag.pictures() {
+            if picture.data().len() <= 32 {
+                continue;
+            }
+            if picture.pic_type() == PictureType::CoverFront {
+                return Some(picture.data().to_vec());
+            }
+            if fallback.is_none() {
+                fallback = Some(picture.data().to_vec());
+            }
+        }
+    }
+    fallback
+}

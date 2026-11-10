@@ -118,7 +118,81 @@ fn title_forms(title: &str) -> Vec<String> {
     push(&mut forms, &strip_feat_local(&cleaned));
     push(&mut forms, &base_recording_title(&cleaned));
     push(&mut forms, &base_recording_title(&strip_feat_local(title)));
+    push(&mut forms, &strip_part_label(title));
+    push(&mut forms, &strip_part_label(&cleaned));
+    push(&mut forms, &strip_part_label(&base_recording_title(&cleaned)));
     forms
+}
+
+/// Drop `(Pt.1)`, `(Part 1)` and a trailing `pt. 1` so the original title is also searched.
+pub fn strip_part_label(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::new();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '(' || chars[index] == '[' {
+            let close = if chars[index] == '(' { ')' } else { ']' };
+            if let Some(rel) = chars[index + 1..].iter().position(|ch| *ch == close) {
+                let inner: String = chars[index + 1..index + 1 + rel].iter().collect();
+                if is_part_label(&inner) {
+                    index += rel + 2;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[index]);
+        index += 1;
+    }
+    strip_trailing_part(&collapse(out.trim()))
+}
+
+fn is_part_label(inner: &str) -> bool {
+    let text = inner.trim().trim_matches('.').to_lowercase();
+    let text = text.trim();
+    for prefix in ["parte", "part", "pt"] {
+        let Some(rest) = text.strip_prefix(prefix) else {
+            continue;
+        };
+        let rest = rest.trim().trim_start_matches('.').trim();
+        if !rest.is_empty() && rest.chars().all(|ch| ch.is_ascii_digit() || ch == '.') && rest.chars().any(|ch| ch.is_ascii_digit()) {
+            return true;
+        }
+    }
+    false
+}
+
+fn strip_trailing_part(title: &str) -> String {
+    let lower = title.to_lowercase();
+    for marker in [" parte ", " part ", " pt. ", " pt "] {
+        let Some(index) = lower.rfind(marker) else {
+            continue;
+        };
+        let rest = title[index + marker.len()..].trim().trim_end_matches('.');
+        if rest.is_empty() || !rest.chars().all(|ch| ch.is_ascii_digit()) {
+            continue;
+        }
+        let head = title[..index].trim().trim_end_matches(|ch: char| matches!(ch, '-' | ',' | ' '));
+        if !head.is_empty() {
+            return head.to_string();
+        }
+    }
+    title.to_string()
+}
+
+pub fn query_attempts(queries: &[LrclibQuery]) -> Vec<String> {
+    queries
+        .iter()
+        .take(8)
+        .map(|query| {
+            let title = query.track_name.trim();
+            let artist = query.artist_name.trim();
+            if artist.is_empty() {
+                title.to_string()
+            } else {
+                format!("{artist} — {title}")
+            }
+        })
+        .collect()
 }
 
 fn artist_forms(artist: &str) -> Vec<String> {

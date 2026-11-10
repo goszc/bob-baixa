@@ -1,3 +1,4 @@
+mod drive_media;
 mod drive_queue;
 mod health;
 mod identify;
@@ -13,6 +14,7 @@ mod pkce;
 mod queue;
 mod tags;
 
+pub use drive_media::*;
 pub use drive_queue::*;
 pub use health::*;
 pub use identify::*;

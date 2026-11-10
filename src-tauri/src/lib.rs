@@ -305,6 +305,7 @@ pub fn run() {
             drive::drive_upload_library,
             drive::drive_push_state,
             drive::drive_pull_state,
+            drive::drive_repair,
             set_now_playing
         ])
         .run(tauri::generate_context!())

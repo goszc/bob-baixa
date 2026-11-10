@@ -1,5 +1,11 @@
 # changelog
 
+## 0.5.4
+
+- um mp4 que ficou só no drive toca o vídeo na capa, em vez de um quadrado cinza. o proxy encaminha o range e responde na hora, com um cache pequeno no disco
+- a letra .lrc e a capa sobem junto com a faixa e ficam numa ficha local. sem o arquivo neste computador, a busca ainda tira "official video" e "(pt.1)" e mostra o que tentou
+- em configurações, reparar biblioteca do drive refaz ficha, letra e capa do que já foi enviado
+
 ## 0.5.3
 
 - o acesso do drive no windows só guarda o refresh token no gerenciador de credenciais. o access token fica na memória. sem o recurso nativo do keyring a leitura voltava vazia, a fila ficava em aguardando e o log parava em "conectado". se o gerenciador falhar, o refresh token vai para um arquivo cifrado com dpapi. sem token, o item vira erro em vez de esperar calado. nomes com caractere fullwidth sobem em json utf-8, e cada passo do envio entra no drive.log
