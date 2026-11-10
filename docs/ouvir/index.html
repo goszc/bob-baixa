@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#161616" />
+    <title>bob baixa</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="../screenshots/home-escuro.png" />
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: #161616; color: #f4f4f1; font: 16px/1.4 "Segoe UI", sans-serif; }
+      main { max-width: 420px; margin: 0 auto; padding: 28px 20px 120px; }
+      h1 { font-size: 28px; font-weight: 560; letter-spacing: -0.04em; margin: 0; }
+      p.sub { color: #9a9a94; margin: 8px 0 24px; }
+      button, input { font: inherit; }
+      .go { width: 100%; height: 48px; border: 0; border-radius: 999px; background: #f4f4f1; color: #161616; }
+      .art { width: 100%; aspect-ratio: 1; border-radius: 28px; background: #242424 center/cover; margin: 8px 0 16px; }
+      .title { font-size: 22px; letter-spacing: -0.03em; }
+      .artist { color: #9a9a94; margin-top: 4px; }
+      audio { width: 100%; margin: 18px 0; }
+      ul { list-style: none; padding: 0; margin: 12px 0 0; }
+      li { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid #2c2c2c; }
+      li button { background: none; border: 0; color: inherit; text-align: left; padding: 0; }
+      .lyric { white-space: pre-wrap; color: #c8c8c2; margin-top: 18px; }
+      .err { color: #ffb4a8; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>bob baixa</h1>
+      <p class="sub" id="sub">a mesma biblioteca do drive, no celular.</p>
+      <section id="gate">
+        <button class="go" id="signin" type="button">entrar com google</button>
+        <p class="err" id="err"></p>
+      </section>
+      <section id="player" hidden>
+        <div class="art" id="art"></div>
+        <div class="title" id="title">—</div>
+        <div class="artist" id="artist"></div>
+        <audio id="audio" controls></audio>
+        <div class="lyric" id="lyric"></div>
+        <ul id="list"></ul>
+      </section>
+    </main>
+    <script src="./config.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

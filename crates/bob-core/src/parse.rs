@@ -488,6 +488,7 @@ fn playlist_item(value: &Value, source_url: &str) -> MediaItem {
         view_count: None,
         formats: Vec::new(),
         entries,
+        unmatched: Vec::new(),
     }
 }
 
@@ -503,6 +504,7 @@ fn video_item(value: &Value, source_url: &str) -> MediaItem {
         view_count: value.get("view_count").and_then(Value::as_u64),
         formats: formats_of(value),
         entries: Vec::new(),
+        unmatched: Vec::new(),
     }
 }
 
@@ -518,6 +520,10 @@ fn playlist_entry(entry: &Value, source_url: &str) -> Option<PlaylistEntry> {
         url,
         duration: entry.get("duration").and_then(Value::as_f64),
         thumbnail: thumb(entry),
+        artist: String::new(),
+        album: String::new(),
+        track: 0,
+        cover: String::new(),
     })
 }
 

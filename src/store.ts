@@ -2,7 +2,8 @@ import { useSyncExternalStore } from "react"
 import { applyWindowTheme, chooseFile, chooseFolder, errorText, invoke, isTauri, listenBob, readTextFile, revealPath } from "./lib/api"
 import { markRemoved, refreshCatalog, unmarkRemoved } from "./lib/catalog"
 import { extractUrls, isMediaPath, isTextPath, isTime, nextIsoFromClock } from "./lib/format"
-import { trackKey } from "./lib/library"
+import { trackKey, trackKind, type Track } from "./lib/library"
+import { queueTracks } from "./lib/player"
 import { forgetTracks } from "./lib/player"
 import { presetFromConfig, presetPatch } from "./lib/presets"
 import type { DownloadPreset } from "./lib/types"
@@ -894,7 +895,7 @@ export function openNotes() {
 
 export async function dismissNotes() {
   const ack = getState().whatsNew
-  const version = getState().tools.appVersion || "0.2.0"
+  const version = getState().tools.appVersion || "0.6.0"
   setState((current) => ({
     ...current,
     showNotes: false,
@@ -1033,6 +1034,7 @@ type BobEvent =
   | { type: "convert"; job: ConvertJob }
   | { type: "schedule"; at: string | null }
   | { type: "update"; version: string }
+  | { type: "ready"; path: string; title: string; artist: string }
 
 function applyEvent(event: BobEvent) {
   if (event.type === "jobs") setState({ jobs: event.jobs })
@@ -1050,6 +1052,19 @@ function applyEvent(event: BobEvent) {
   } else if (event.type === "convert") setState({ convertJob: event.job, busy: event.job.state === "running" ? "convert" : null })
   else if (event.type === "schedule") setState({ scheduleAt: event.at })
   else if (event.type === "update") setState({ updateOffer: true, busy: null })
+  else if (event.type === "ready" && getState().config.queueNewDownloads) {
+    const track: Track = {
+      id: event.path,
+      path: event.path,
+      title: event.title || event.path,
+      artist: event.artist,
+      album: "",
+      folder: "",
+      pageUrl: "",
+      kind: trackKind(event.path),
+    }
+    queueTracks([track], getState().config.queueNewWhere === "next" ? "next" : "end")
+  }
 }
 
 async function bindDesktopDrag() {

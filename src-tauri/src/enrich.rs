@@ -432,7 +432,9 @@ pub async fn after_download(app: &tauri::AppHandle, path: &str, url: &str, title
     if grab && !url.trim().is_empty() {
         let _ = grab_manual_lyrics(app, &file, url).await;
     }
-    let identity = identify_track(app, &file, title, "", true).await;
+    let (hint_artist, hint_title) = crate::hub::tidy_title(app, title).await;
+    let hint = if hint_title.trim().is_empty() { title } else { hint_title.as_str() };
+    let identity = identify_track(app, &file, hint, &hint_artist, true).await;
     let (artist, album, kind_title) = match &identity {
         Some(hit) => (hit.artist.clone(), hit.album.clone(), hit.title.clone()),
         None => (String::new(), String::new(), title.to_string()),

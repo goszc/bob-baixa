@@ -63,6 +63,17 @@ pub struct Config {
     pub hotkey_prev: String,
     #[serde(default = "default_hotkey_like")]
     pub hotkey_like: String,
+    /// Put a finished download on the playback queue.
+    #[serde(default = "default_true")]
+    pub queue_new_downloads: bool,
+    /// `end` appends. `next` plays it after the current track.
+    #[serde(default = "default_queue_where")]
+    pub queue_new_where: String,
+    /// Share of a discovery shuffle that should be new songs. 0 to 0.8.
+    #[serde(default = "default_discover_ratio")]
+    pub discover_ratio: f64,
+    #[serde(default = "default_gemini_model")]
+    pub gemini_model: String,
 }
 
 impl Default for Config {
@@ -112,8 +123,24 @@ impl Default for Config {
             hotkey_next: default_hotkey_next(),
             hotkey_prev: default_hotkey_prev(),
             hotkey_like: default_hotkey_like(),
+            queue_new_downloads: true,
+            queue_new_where: default_queue_where(),
+            discover_ratio: default_discover_ratio(),
+            gemini_model: default_gemini_model(),
         }
     }
+}
+
+fn default_queue_where() -> String {
+    "end".into()
+}
+
+fn default_discover_ratio() -> f64 {
+    0.35
+}
+
+fn default_gemini_model() -> String {
+    "gemini-2.5-flash".into()
 }
 
 fn default_translate_lang() -> String {
@@ -418,6 +445,14 @@ pub struct PlaylistEntry {
     pub duration: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<String>,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub track: u32,
+    #[serde(default)]
+    pub cover: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -437,6 +472,8 @@ pub struct MediaItem {
     pub view_count: Option<u64>,
     pub formats: Vec<FormatOption>,
     pub entries: Vec<PlaylistEntry>,
+    #[serde(default)]
+    pub unmatched: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,6 +516,12 @@ pub enum BobEvent {
     Convert { job: ConvertJob },
     Schedule { at: Option<String> },
     Update { version: String },
+    /// A download finished and the player may append it.
+    Ready {
+        path: String,
+        title: String,
+        artist: String,
+    },
     /// Batch Opus conversion. `state` is `running`, `done`, `failed`, or `cancelled`.
     Economic {
         done: u32,

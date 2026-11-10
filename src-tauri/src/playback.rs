@@ -33,6 +33,23 @@ pub struct MediaInspect {
 pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaInspect, String> {
     if let Some(id) = path.strip_prefix("drive:") {
         let record = crate::drive::describe_drive(id);
+        if let Some(local) = crate::drive::offline_copy(id) {
+            let _ = app.asset_protocol_scope().allow_file(&local);
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(src) = window.convert_file_src(local.as_path(), None) {
+                    return Ok(MediaInspect {
+                        exists: true,
+                        kind: record.kind,
+                        title: record.title,
+                        artist: record.artist,
+                        album: record.album,
+                        duration: record.duration,
+                        src,
+                        cover: record.cover,
+                    });
+                }
+            }
+        }
         return Ok(MediaInspect {
             exists: true,
             kind: record.kind,
@@ -437,6 +454,12 @@ pub async fn scan_library(app: tauri::AppHandle, path: Option<String>) -> Result
 
 #[tauri::command]
 pub async fn delete_library_track(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    if let Some(id) = path.strip_prefix("drive:") {
+        let id = id.to_string();
+        return tokio::task::spawn_blocking(move || crate::drive::set_trashed(&id, true))
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     let (root, language) = {
         let inner = app.state::<AppState>().inner.clone().lock_owned().await;
         (inner.config.output_dir.clone(), inner.config.language.clone())

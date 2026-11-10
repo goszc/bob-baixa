@@ -189,6 +189,11 @@ export function Home() {
                   )
                 })}
               </ul>
+              {media.unmatched?.length ? (
+                <p className="mt-2 text-[12px] text-muted">
+                  {t("import_unmatched")}: {media.unmatched.join(", ")}
+                </p>
+              ) : null}
             </article>
           ),
         )}

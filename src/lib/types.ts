@@ -74,6 +74,10 @@ export interface Config {
   hotkeyNext: string
   hotkeyPrev: string
   hotkeyLike: string
+  queueNewDownloads: boolean
+  queueNewWhere: "end" | "next"
+  discoverRatio: number
+  geminiModel: string
 }
 
 export interface DownloadPreset {
@@ -110,6 +114,8 @@ export interface PlaylistEntry {
   title: string
   duration?: number
   thumbnail?: string
+  artist?: string
+  album?: string
 }
 
 export interface MediaItem {
@@ -123,6 +129,7 @@ export interface MediaItem {
   viewCount?: number
   formats: FormatOption[]
   entries: PlaylistEntry[]
+  unmatched?: string[]
 }
 
 export interface Job {
@@ -257,4 +264,8 @@ export const defaultConfig: Config = {
   hotkeyNext: "ctrl+alt+right",
   hotkeyPrev: "ctrl+alt+left",
   hotkeyLike: "ctrl+alt+l",
+  queueNewDownloads: true,
+  queueNewWhere: "end",
+  discoverRatio: 0.35,
+  geminiModel: "gemini-2.5-flash",
 }

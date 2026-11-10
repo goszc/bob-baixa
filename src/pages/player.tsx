@@ -147,6 +147,21 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
         <button type="button" className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink" onClick={translate}>
           {t("lyrics_translate")}
         </button>
+        <button
+          type="button"
+          className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink"
+          onClick={() => {
+            const track = player.queue[player.index]
+            if (!track || !isTauri()) return
+            void invoke<{ meaning: string; translation: string }>("lyric_meaning", {
+              title: track.title,
+              artist: track.artist,
+              lyrics: lines.map((line) => line.text).join("\n"),
+            }).then((found) => setTranslateNote(found.meaning || found.translation))
+          }}
+        >
+          {t("player_meaning")}
+        </button>
         <button type="button" className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink" onClick={onKaraoke} disabled={!lines.length}>
           {t("lyrics_karaoke")}
         </button>

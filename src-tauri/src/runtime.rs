@@ -138,6 +138,7 @@ pub fn boot(app: AppHandle) {
         tauri::async_runtime::spawn(async move { clipboard_loop(app_clip).await });
         start_http(app.clone());
         crate::drive::boot(app.clone());
+        crate::hub::startup(app.clone());
         register_hotkey(&app);
         setup_tray(&app);
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -271,6 +272,9 @@ pub async fn analyze(app: &AppHandle, urls: Vec<String>) -> Result<Vec<MediaItem
 }
 
 async fn analyze_one(bin: &Path, url: String) -> Result<MediaItem, String> {
+    if bob_core::parse_spotify(&url).is_some() {
+        return crate::hub::review_spotify(bin, &url).await;
+    }
     let output = capture(
         bin,
         &[
@@ -339,7 +343,7 @@ pub async fn enqueue(app: &AppHandle, items: Vec<EnqueueItem>) -> Result<(), Str
         let hold = inner.schedule_at.clone();
         let config = inner.config.clone();
         for item in items {
-            if !(item.url.starts_with("http://") || item.url.starts_with("https://")) {
+            if !(item.url.starts_with("http://") || item.url.starts_with("https://") || item.url.starts_with("ytsearch")) {
                 continue;
             }
             inner
@@ -1457,6 +1461,14 @@ async fn finish(
     }
     inner.logs.remove(id);
     inner.last_job_emit.remove(id);
+    let ready = if state == "done" && inner.config.queue_new_downloads {
+        path.clone().map(|ready_path| {
+            let title = inner.jobs.iter().find(|job| job.id == id).map(|job| job.title.clone()).unwrap_or_default();
+            (ready_path, title)
+        })
+    } else {
+        None
+    };
     save(&inner);
     let jobs = inner.jobs.clone();
     let history = inner.history.clone();
@@ -1464,6 +1476,9 @@ async fn finish(
     emit(app, &BobEvent::Jobs { jobs });
     if state == "done" || state == "failed" {
         emit(app, &BobEvent::History { history });
+    }
+    if let Some((ready_path, title)) = ready {
+        emit(app, &BobEvent::Ready { path: ready_path, title, artist: String::new() });
     }
     if let Some(body) = notify_body {
         notify(app, &body);
@@ -1592,6 +1607,10 @@ async fn check_watch_body(app: &AppHandle, id: String) {
             title: media.title.clone(),
             duration: media.duration,
             thumbnail: media.thumbnail.clone(),
+            artist: String::new(),
+            album: String::new(),
+            track: 0,
+            cover: String::new(),
         }]
     } else {
         media.entries.clone()
@@ -2119,7 +2138,7 @@ pub(crate) async fn ytdlp_path(app: &AppHandle) -> Result<PathBuf, String> {
     })
 }
 
-async fn capture(bin: &Path, args: &[String]) -> Result<String, String> {
+pub(crate) async fn capture(bin: &Path, args: &[String]) -> Result<String, String> {
     let mut cmd = tokio_command(bin);
     cmd.args(args)
         .stdout(std::process::Stdio::piped())

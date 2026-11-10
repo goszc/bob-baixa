@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react"
 import { invoke, isTauri } from "./api"
-import { trackKey, type Track } from "./library"
+import { nextPaths } from "./discover"
+import { relatedTracks, trackKey, type Track } from "./library"
 import { EQ_BANDS, eqIsFlat } from "./eq"
 import { activeEq, clearSleep, flushHear, getMusic, hear, onAudioPref, rememberPosition, rememberSession, resumeFor, toggleLike, touchRecent } from "./music"
 
@@ -57,6 +58,7 @@ export interface PlayerState {
   error: "missing" | "failed" | null
   meta: PlayerMeta | null
   playbackKind: PlaybackKind | null
+  radio: boolean
 }
 
 const sampleLyrics: TrackLyrics = {
@@ -115,6 +117,7 @@ function initial(): PlayerState {
     error: null,
     meta: null,
     playbackKind: null,
+    radio: false,
   }
 }
 
@@ -424,6 +427,8 @@ function startLoop() {
         if (element.currentTime > 5) rememberPosition(track.path, element.currentTime)
       }
       maybeCrossfade(element)
+      prefetchAhead()
+      extendRadio()
       setPlayer({ currentTime: element.currentTime, duration, playing: true })
     }
     frame = requestAnimationFrame(tick)
@@ -744,11 +749,39 @@ async function beginCrossfade(nextIndex: number, seconds: number) {
   }, seconds * 1000 + 40)
 }
 
-export function playTracks(queue: Track[], index: number) {
+let shelf: Track[] = []
+let warmed = ""
+
+export function rememberLibrary(tracks: Track[]) {
+  shelf = tracks
+}
+
+function prefetchAhead() {
+  if (!isTauri()) return
+  const next = nextPaths(player.order, player.index, 2)
+  const key = next.join(",")
+  if (!key || key === warmed) return
+  warmed = key
+  const paths = next.map((index) => player.queue[index]?.path).filter((path): path is string => Boolean(path))
+  void invoke("warm_next", { paths })
+}
+
+function extendRadio() {
+  if (!player.radio || !shelf.length) return
+  const pos = player.order.indexOf(player.index)
+  if (pos < 0 || player.order.length - pos > 2) return
+  const seed = currentTrack()
+  if (!seed) return
+  const have = new Set(player.queue.map((track) => trackKey(track.path)))
+  const more = relatedTracks(seed, shelf).filter((track) => !have.has(trackKey(track.path))).slice(0, 8)
+  if (more.length) queueTracks(more, "end")
+}
+
+export function playTracks(queue: Track[], index: number, radio = false) {
   if (!queue.length) return
   const safe = Math.min(Math.max(index, 0), queue.length - 1)
   const order = buildOrder(queue.length, safe, player.shuffle)
-  setPlayer({ queue, order })
+  setPlayer({ queue, order, radio })
   void load(safe)
 }
 
@@ -878,6 +911,7 @@ export function clearPlayback() {
     lyrics: null,
     lyricsState: "idle",
     playbackKind: null,
+    radio: false,
   })
   rememberSession(null)
 }

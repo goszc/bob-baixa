@@ -1,5 +1,6 @@
 mod drive;
 mod enrich;
+mod hub;
 mod hidden;
 mod media_session;
 mod playback;
@@ -306,6 +307,21 @@ pub fn run() {
             drive::drive_push_state,
             drive::drive_pull_state,
             drive::drive_repair,
+            hub::set_offline,
+            hub::offline_paths,
+            hub::drive_space,
+            hub::free_cache,
+            hub::warm_next,
+            hub::list_trash,
+            hub::restore_trash,
+            hub::purge_trash,
+            hub::gemini_status,
+            hub::gemini_save_key,
+            hub::clean_title,
+            hub::lyric_meaning,
+            hub::mood_mix,
+            hub::natural_queue,
+            hub::discover_queries,
             set_now_playing
         ])
         .run(tauri::generate_context!())

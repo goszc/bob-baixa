@@ -1,5 +1,18 @@
 # changelog
 
+## 0.6.0
+
+- uma playlist, uma faixa ou as curtidas podem ficar disponíveis offline. a cópia local permanece mesmo com manter só no drive, e toca sem internet
+- cada faixa do drive guarda os primeiros 15 segundos neste computador, então o play começa na hora enquanto o resto chega. a próxima da fila é preparada durante a atual
+- ao abrir, o app confere letra, capa e ficha do que falta, com calma, e avisa o que completou
+- configurações mostra o espaço do bob baixa, o que está offline e o que está só na nuvem, e liberar espaço limpa o cache sem apagar o offline
+- apagar uma faixa do drive manda para a lixeira. dá para restaurar ou apagar de vez
+- um link público do spotify ou do youtube vira uma lista para revisar. o que não achar no youtube aparece embaixo. o download econômico entra na fila
+- rádio continua com faixas parecidas que já estão na biblioteca. descobrir mistura a biblioteca com músicas novas, buscadas e baixadas no modo econômico. dá para pular com não curti
+- um download que termina entra na fila. dá para desligar ou mandar tocar a seguir
+- a chave do gemini, de aistudio.google.com/apikey, fica guardada como o token do drive. com ela, o app sugere o descobrir, limpa título de youtube, monta clima (pra estudar, treino), traduz e explica a letra, e monta uma fila a partir de uma frase. sem a chave, valem as regras e o histórico
+- ouvir no celular é uma página estática em docs/ouvir, para o github pages
+
 ## 0.5.4
 
 - um mp4 que ficou só no drive toca o vídeo na capa, em vez de um quadrado cinza. o proxy encaminha o range e responde na hora, com um cache pequeno no disco

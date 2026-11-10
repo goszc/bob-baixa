@@ -100,6 +100,32 @@ sem esse segredo, o workflow ainda gera o instalador, mas não publica o manifes
 
 o botão **entrar com google** só existe se a compilação recebeu `BOB_GOOGLE_CLIENT_ID` e `BOB_GOOGLE_CLIENT_SECRET` (segredos do actions com esses nomes, cliente oauth desktop do app, escopo `drive.file`). quem usa o programa não cria cliente nem cola id. sem os dois segredos o instalador sai normal e o drive fica escondido.
 
+## 0.6.0
+
+dá para marcar faixa, playlist ou curtidas como disponível offline. o começo de cada faixa do drive fica em cache para o play sair na hora, e a próxima da fila é preparada enquanto a atual toca. apagar no drive vai para a lixeira. em configurações, o espaço mostra o que está offline e o que está só na nuvem, e liberar espaço limpa o cache.
+
+um link público do spotify ou do youtube abre uma lista para marcar o que baixar. rádio fica na biblioteca. descobrir mistura o que você já tem com música nova, no modo econômico. a frase embaixo da biblioteca monta uma fila.
+
+a chave do gemini é colada em configurações e guardada como o token do drive. sem ela, as sugestões usam artista, álbum e o que você ouviu.
+
+### ouvir no celular
+
+a pasta `docs/ouvir` é um site estático. no github pages, a origem precisa ser **main** e a pasta **/docs**. o endereço fica:
+
+`https://goszc.github.io/bob-baixa/ouvir/`
+
+no cliente oauth usado por `BOB_GOOGLE_CLIENT_ID` (o mesmo id do app, escopo `drive.file`), acrescente este redirect uri:
+
+`https://goszc.github.io/bob-baixa/ouvir/`
+
+e, para testar nesta máquina:
+
+`http://127.0.0.1:4173/ouvir/`
+
+o site não leva o segredo do cliente. se o cliente atual for do tipo computador e o google não deixar cadastrar redirect de site, troque o tipo para aplicativo da web, mantenha o redirect de loopback que o app desktop já usa e o mesmo client id. um client id diferente não enxerga os arquivos que o app criou. a chave do gemini não entra no site: cada pessoa cola a própria no app de computador.
+
+em `docs/ouvir/config.js`, troque o client id de exemplo pelo mesmo `BOB_GOOGLE_CLIENT_ID` antes de publicar.
+
 ## compilar
 
 precisa de rust estável, node 22 e, para o instalador, o nsis.
