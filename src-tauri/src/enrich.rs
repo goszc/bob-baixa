@@ -402,6 +402,24 @@ pub fn ensure_fpcalc(dir: &Path) -> Option<PathBuf> {
     None
 }
 
+fn raw_fingerprint(bin: &Path, file: &Path) -> Option<Vec<u32>> {
+    let output = std_command(bin)
+        .args(["-json", "-raw", "-length", "30", &file.to_string_lossy()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let list = value.get("fingerprint")?.as_array()?;
+    let hashes = list.iter().filter_map(|item| item.as_u64().map(|value| value as u32)).take(80).collect::<Vec<_>>();
+    if hashes.len() < 12 {
+        None
+    } else {
+        Some(hashes)
+    }
+}
+
 fn run_fpcalc(bin: &Path, file: &Path) -> Option<(u32, String)> {
     let output = std_command(bin)
         .args(fpcalc_args(&file.to_string_lossy()))
@@ -741,6 +759,7 @@ pub async fn library_issues(app: tauri::AppHandle, root: String) -> Result<Libra
 }
 
 fn collect_issues(dir: &Path, root: &Path) -> LibraryIssues {
+    let fpcalc = ensure_fpcalc(dir);
     let mut items = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(folder) = stack.pop() {
@@ -765,6 +784,14 @@ fn collect_issues(dir: &Path, root: &Path) -> LibraryIssues {
             let embedded = read_embedded(&path);
             let key = path.to_string_lossy().to_string();
             let identity = read_identity(dir, &key);
+            let format = path.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_ascii_lowercase();
+            let fingerprint = if items.len() < 120 {
+                fpcalc.as_ref().and_then(|bin| raw_fingerprint(bin, &path)).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let lyrics = sibling_lrc_paths(&path).iter().any(|candidate| candidate.is_file());
+            let cover = bob_core::embedded_cover(&path).is_some();
             items.push(DupItem {
                 path: key,
                 title: identity
@@ -783,6 +810,10 @@ fn collect_issues(dir: &Path, root: &Path) -> LibraryIssues {
                 recording_id: identity.map(|item| item.recording_id).unwrap_or_default(),
                 size,
                 broken,
+                format,
+                fingerprint,
+                lyrics,
+                cover,
             });
         }
     }

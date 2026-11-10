@@ -2,7 +2,7 @@
 
 export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 
-const KINDS = ["audio", "video", "lyrics", "cover", "index"]
+const KINDS = ["audio", "video", "lyrics", "cover", "index", "state"]
 
 export function libraryQuery() {
   const kinds = KINDS.map((kind) => `appProperties has { key='bobKind' and value='${kind}' }`)
@@ -95,6 +95,51 @@ function rowToTrack(row) {
 
 function text(value) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+/** Union likes and playlists. The newer queue wins. Nothing is dropped on a tie except the older queue. */
+export function mergePhoneState(local, remote) {
+  const left = normalizeState(local)
+  const right = normalizeState(remote)
+  const likes = [...new Set([...left.likes, ...right.likes])]
+  const byName = new Map()
+  for (const playlist of [...left.playlists, ...right.playlists]) {
+    const key = playlist.name.toLocaleLowerCase()
+    const current = byName.get(key)
+    if (!current) byName.set(key, { name: playlist.name, paths: [...playlist.paths] })
+    else current.paths = [...new Set([...current.paths, ...playlist.paths])]
+  }
+  const queue = right.updatedAt >= left.updatedAt ? right.queue : left.queue
+  return {
+    updatedAt: Math.max(left.updatedAt, right.updatedAt),
+    likes,
+    playlists: [...byName.values()],
+    queue,
+  }
+}
+
+export function stateFile(files) {
+  const list = Array.isArray(files) ? files : []
+  return list.find((file) => file?.appProperties?.bobKind === "state" || file?.name === "state.json") || null
+}
+
+function normalizeState(value) {
+  const state = value && typeof value === "object" ? value : {}
+  const paths = (list) => (Array.isArray(list) ? list.filter((item) => typeof item === "string" && item) : [])
+  const playlists = Array.isArray(state.playlists)
+    ? state.playlists
+        .map((playlist) => ({
+          name: text(playlist?.name).slice(0, 80),
+          paths: paths(playlist?.paths),
+        }))
+        .filter((playlist) => playlist.name)
+    : []
+  return {
+    updatedAt: Number(state.updatedAt) || 0,
+    likes: paths(state.likes),
+    playlists,
+    queue: paths(state.queue),
+  }
 }
 
 export function extensionOf(name) {

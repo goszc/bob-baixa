@@ -1,5 +1,13 @@
 # changelog
 
+## 0.6.5
+
+- no celular, o service worker é um script clássico, assume a página na primeira visita e só então toca. o token fica no aparelho e a entrada silenciosa acontece antes do botão. um toque na versão mostra o worker, o token e o último stream
+- o início mostra os minutos da semana, o artista do mês e a hora do dia
+- faixas repetidas, mesmo com outro nome, aparecem com formato, bitrate, letra e capa. a cópia pior vai para a lixeira e dá para restaurar, no disco e no drive
+- uma versão nova aparece como “Nova versão X disponível”. atualizar baixa o instalador assinado, instala e abre de novo
+- o player ficou com cinco controles. o coração fica no título. brilho, vista e ajustes ficam na linha do volume
+
 ## 0.6.4
 
 - o player ficou uma tela só: capa ou vídeo na proporção da faixa, uma fileira de ícones, busca e a lista. a biblioteca, a fila e a letra dividem o painel da direita

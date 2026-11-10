@@ -342,6 +342,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             runtime::show_main(app);
             runtime::open_args(app, args);
@@ -426,6 +427,7 @@ pub fn run() {
             hub::list_trash,
             hub::restore_trash,
             hub::purge_trash,
+            hub::trash_copy,
             hub::gemini_status,
             hub::gemini_save_key,
             hub::clean_title,

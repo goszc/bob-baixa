@@ -1,4 +1,4 @@
-import { DRIVE_SCOPE, activeLyric, choosePlayback, deviceSupport, indexFile, libraryQuery, lyricLines, mergeLibrary } from "./library.js"
+import { DRIVE_SCOPE, activeLyric, choosePlayback, deviceSupport, indexFile, libraryQuery, lyricLines, mergeLibrary, mergePhoneState, stateFile } from "./library.js"
 
 const gate = document.querySelector("#gate")
 const player = document.querySelector("#player")
@@ -14,8 +14,9 @@ const clientId = window.BOB_WEB?.clientId || ""
 const api = (window.BOB_WEB?.api || "https://www.googleapis.com").replace(/\/$/, "")
 
 let tokenClient = null
-let access = sessionStorage.getItem("bob-access") || ""
-let expiresAt = Number(sessionStorage.getItem("bob-exp") || 0)
+let access = localStorage.getItem("bob-access") || sessionStorage.getItem("bob-access") || ""
+let expiresAt = Number(localStorage.getItem("bob-exp") || sessionStorage.getItem("bob-exp") || 0)
+let hint = localStorage.getItem("bob-hint") || ""
 let tracks = []
 let visible = []
 let index = -1
@@ -25,9 +26,15 @@ let promptUsed = false
 let blobUrl = ""
 let retrying = false
 let explained = false
+let phoneState = { updatedAt: 0, likes: [], playlists: [], queue: [] }
+let liked = new Set()
+let queue = []
+let tab = "library"
+let lastStream = ""
+let swState = "sem worker"
+let driveFiles = []
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js", { type: "module" }).catch(() => {})
   navigator.serviceWorker.addEventListener("controllerchange", () => void pushToken())
   navigator.serviceWorker.addEventListener("message", onWorker)
 }
@@ -51,7 +58,7 @@ signin.onclick = () => {
     setErr("falta o client id web. o readme explica o segredo BOB_GOOGLE_WEB_CLIENT_ID.")
     return
   }
-  void requestToken(false)
+  void requestToken(true)
 }
 
 document.querySelector("#prev").onclick = () => step(-1)
@@ -76,11 +83,7 @@ document.querySelector("#seek").oninput = (event) => {
   media.currentTime = (Number(event.target.value) / 1000) * media.duration
 }
 
-if (access && expiresAt > Date.now()) {
-  void openLibrary()
-} else if (access) {
-  void requestToken(false)
-}
+void boot()
 
 setInterval(() => {
   if (!access) return
@@ -111,8 +114,8 @@ function ensureClient() {
         promptUsed = false
         access = response.access_token
         expiresAt = Date.now() + (Number(response.expires_in) || 3600) * 1000 - 60_000
-        sessionStorage.setItem("bob-access", access)
-        sessionStorage.setItem("bob-exp", String(expiresAt))
+        if (response.email) hint = response.email
+        rememberSession()
         setErr("")
         void pushToken()
         const wait = pending
@@ -127,14 +130,82 @@ function ensureClient() {
   return tokenClient
 }
 
+function rememberSession() {
+  localStorage.setItem("bob-access", access)
+  localStorage.setItem("bob-exp", String(expiresAt))
+  if (hint) localStorage.setItem("bob-hint", hint)
+  sessionStorage.setItem("bob-access", access)
+  sessionStorage.setItem("bob-exp", String(expiresAt))
+  const maxAge = Math.max(60, Math.round((expiresAt - Date.now()) / 1000))
+  document.cookie = `bob-access=${encodeURIComponent(access)}; path=/; max-age=${maxAge}; samesite=lax`
+}
+
 function requestToken(force) {
   const client = ensureClient()
   if (!client) return Promise.reject(new Error("entra de novo."))
   promptUsed = force
   return new Promise((resolve, reject) => {
     pending = { resolve, reject }
-    client.requestAccessToken({ prompt: force ? "consent" : "" })
+    const options = { prompt: force ? "consent" : "" }
+    if (hint) options.login_hint = hint
+    client.requestAccessToken(options)
   })
+}
+
+async function boot() {
+  gate.hidden = true
+  setStatus("entrando…")
+  await ensureWorker()
+  if (access && expiresAt > Date.now() + 15_000) {
+    rememberSession()
+    await openLibrary()
+    return
+  }
+  try {
+    await waitForGoogle()
+    await requestToken(false)
+    await openLibrary()
+  } catch {
+    gate.hidden = false
+    player.hidden = true
+    setStatus("")
+  }
+}
+
+function waitForGoogle() {
+  return new Promise((resolve, reject) => {
+    const started = Date.now()
+    const tick = () => {
+      if (window.google?.accounts?.oauth2) resolve()
+      else if (Date.now() - started > 4000) reject(new Error("sem google"))
+      else setTimeout(tick, 80)
+    }
+    tick()
+  })
+}
+
+async function ensureWorker() {
+  if (!("serviceWorker" in navigator)) {
+    swState = "sem worker"
+    return
+  }
+  try {
+    await navigator.serviceWorker.register("./sw.js")
+    await navigator.serviceWorker.ready
+    if (!navigator.serviceWorker.controller) {
+      if (sessionStorage.getItem("bob-sw-reload") !== "1") {
+        sessionStorage.setItem("bob-sw-reload", "1")
+        location.reload()
+        return
+      }
+      swState = "registrado, sem controle"
+      return
+    }
+    swState = "controlado"
+    await pushToken()
+  } catch (error) {
+    swState = error instanceof Error ? error.message : "falhou"
+  }
 }
 
 async function openLibrary(retried = false) {
@@ -162,6 +233,8 @@ async function openLibrary(retried = false) {
           }
         }
         access = ""
+        localStorage.removeItem("bob-access")
+        localStorage.removeItem("bob-exp")
         sessionStorage.removeItem("bob-access")
         gate.hidden = false
         player.hidden = true
@@ -192,6 +265,18 @@ async function openLibrary(retried = false) {
     }
   }
   tracks = mergeLibrary(found, phoneIndex)
+  driveFiles = found
+  const stateHit = stateFile(found)
+  if (stateHit?.id) {
+    try {
+      const response = await fetch(`${api}/drive/v3/files/${stateHit.id}?alt=media`, { headers: { authorization: `Bearer ${access}` } })
+      if (response.ok) phoneState = mergePhoneState(phoneState, await response.json())
+    } catch {
+      /* local likes still work */
+    }
+  }
+  liked = new Set(phoneState.likes)
+  queue = phoneState.queue.map((id) => tracks.find((track) => track.id === id)).filter(Boolean)
   await pushToken()
   renderList()
   setStatus(tracks.length ? "" : "")
@@ -237,7 +322,7 @@ function toggle() {
   else media.pause()
 }
 
-function play(trackIndex) {
+async function play(trackIndex) {
   const track = visible[trackIndex]
   if (!track) return
   index = trackIndex
@@ -264,7 +349,12 @@ function play(trackIndex) {
   showLyrics(track, 0)
   const src = streamUrl(choice.id, track.size, choice.mime)
   setStatus("carregando…")
+  document.querySelector("#mini-title").textContent = track.title || "bob baixa"
+  document.querySelector("#mini-artist").textContent = track.artist || ""
+  if (!queue.length) queue = visible.slice()
+  document.querySelector("#like")?.setAttribute("aria-pressed", liked.has(track.id) ? "true" : "false")
   if (navigator.serviceWorker?.controller) {
+    await pushToken()
     media.src = src
     media.play().catch((error) => {
       if (explained) return
@@ -281,6 +371,7 @@ function streamUrl(id, size, mime) {
   const url = new URL(`stream/${id}`, document.baseURI)
   if (size) url.searchParams.set("size", String(size))
   if (mime) url.searchParams.set("type", mime)
+  if (api) url.searchParams.set("api", api)
   return url.href
 }
 
@@ -395,6 +486,11 @@ function onMediaError(media) {
 
 function onWorker(event) {
   const data = event.data || {}
+  if (data.type === "stream") {
+    lastStream = `${data.status || 0}`
+    paintDebug()
+    return
+  }
   if (data.type === "unauthorized") {
     void requestToken(false).catch(() => setErr("a sessão acabou. entra de novo."))
     return
@@ -455,8 +551,101 @@ async function pushToken() {
   })
 }
 
+document.querySelector("#version")?.addEventListener("click", () => {
+  const panel = document.querySelector("#debug")
+  panel.hidden = !panel.hidden
+  paintDebug()
+})
+document.querySelector("#like")?.addEventListener("click", () => {
+  const track = visible[index]
+  if (!track) return
+  if (liked.has(track.id)) liked.delete(track.id)
+  else liked.add(track.id)
+  phoneState = { ...phoneState, likes: [...liked], updatedAt: Date.now() }
+  localStorage.setItem("bob-phone-state", JSON.stringify(phoneState))
+  document.querySelector("#like").setAttribute("aria-pressed", liked.has(track.id) ? "true" : "false")
+  void saveState()
+})
+for (const button of document.querySelectorAll("[data-tab]")) {
+  button.addEventListener("click", () => {
+    tab = button.dataset.tab
+    for (const item of document.querySelectorAll("[data-tab]")) item.setAttribute("aria-selected", item === button ? "true" : "false")
+    document.querySelector("#list").hidden = tab !== "library" && tab !== "likes"
+    document.querySelector("#lyric").hidden = tab !== "lyrics"
+    document.querySelector("#queue").hidden = tab !== "queue"
+    if (tab === "likes") renderLikes()
+    if (tab === "queue") renderQueue()
+  })
+}
+document.querySelector("#mini")?.addEventListener("click", (event) => {
+  if (event.target.closest("button")) return
+  document.body.classList.toggle("sheet")
+})
+document.querySelector("#mini-toggle")?.addEventListener("click", () => toggle())
+
+function renderLikes() {
+  const list = document.querySelector("#list")
+  list.hidden = false
+  list.innerHTML = ""
+  const rows = tracks.filter((track) => liked.has(track.id))
+  if (!rows.length) {
+    list.innerHTML = "<li>nenhuma curtida ainda.</li>"
+    return
+  }
+  for (const track of rows) {
+    const item = document.createElement("li")
+    const button = document.createElement("button")
+    button.type = "button"
+    button.textContent = track.artist ? `${track.artist} — ${track.title}` : track.title
+    button.onclick = () => {
+      visible = rows
+      play(rows.indexOf(track))
+    }
+    item.append(button)
+    list.append(item)
+  }
+}
+
+function renderQueue() {
+  const box = document.querySelector("#queue")
+  box.innerHTML = ""
+  if (!queue.length) {
+    box.textContent = "a fila começa quando você escolhe uma faixa."
+    return
+  }
+  queue.forEach((track, trackIndex) => {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.textContent = track.artist ? `${track.artist} — ${track.title}` : track.title
+    button.onclick = () => {
+      visible = queue
+      play(trackIndex)
+    }
+    box.append(button)
+  })
+}
+
+async function saveState() {
+  const hit = stateFile(driveFiles)
+  if (!access || !hit?.id) return
+  await fetch(`https://www.googleapis.com/upload/drive/v3/files/${hit.id}?uploadType=media`, {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
+    body: JSON.stringify(phoneState),
+  }).catch(() => {})
+}
+
+function paintDebug() {
+  const panel = document.querySelector("#debug")
+  if (!panel || panel.hidden) return
+  const tokenLine = access ? (expiresAt > Date.now() ? "token válido" : "token vencido") : "sem token"
+  panel.textContent = `worker: ${swState}\n${tokenLine}\núltimo stream: ${lastStream || "—"}\nerro: ${err.textContent || "—"}`
+}
+
 function setErr(message) {
+  err.hidden = !message
   err.textContent = message
+  paintDebug()
 }
 
 function setStatus(message) {

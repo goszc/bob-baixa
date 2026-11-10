@@ -11,6 +11,21 @@ pub struct DupItem {
     pub recording_id: String,
     pub size: u64,
     pub broken: bool,
+    pub format: String,
+    pub fingerprint: Vec<u32>,
+    pub lyrics: bool,
+    pub cover: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DupCopy {
+    pub path: String,
+    pub format: String,
+    pub bitrate: u32,
+    pub size: u64,
+    pub lyrics: bool,
+    pub cover: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -18,6 +33,8 @@ pub struct DupItem {
 pub struct DupGroup {
     pub reason: String,
     pub paths: Vec<String>,
+    pub copies: Vec<DupCopy>,
+    pub worse: String,
 }
 
 pub fn media_header_ok(header: &[u8]) -> bool {
@@ -71,10 +88,27 @@ pub fn duplicate_groups(items: &[DupItem]) -> Vec<DupGroup> {
         for index in &bucket {
             used[*index] = true;
         }
-        groups.push(DupGroup {
-            reason: "recording".into(),
-            paths: bucket.iter().map(|index| items[*index].path.clone()).collect(),
-        });
+        groups.push(group_from("recording", items, &bucket));
+    }
+    let mut prints: Vec<(Vec<u32>, Vec<usize>)> = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        if used[index] || item.broken || item.fingerprint.len() < 12 {
+            continue;
+        }
+        if let Some((_, bucket)) = prints.iter_mut().find(|(key, _)| fingerprints_match(key, &item.fingerprint)) {
+            bucket.push(index);
+        } else {
+            prints.push((item.fingerprint.clone(), vec![index]));
+        }
+    }
+    for (_, bucket) in prints {
+        if bucket.len() < 2 {
+            continue;
+        }
+        for index in &bucket {
+            used[*index] = true;
+        }
+        groups.push(group_from("fingerprint", items, &bucket));
     }
     for left in 0..items.len() {
         if used[left] || items[left].broken {
@@ -93,13 +127,76 @@ pub fn duplicate_groups(items: &[DupItem]) -> Vec<DupGroup> {
             for index in &bucket {
                 used[*index] = true;
             }
-            groups.push(DupGroup {
-                reason: "similar".into(),
-                paths: bucket.iter().map(|index| items[*index].path.clone()).collect(),
-            });
+            groups.push(group_from("similar", items, &bucket));
         }
     }
     groups
+}
+
+/// Chromaprint raw hashes of the same recording stay close even when the file name does not.
+pub fn fingerprints_match(left: &[u32], right: &[u32]) -> bool {
+    if left.len() < 12 || right.len() < 12 {
+        return false;
+    }
+    for shift in 0..5 {
+        if aligned(&left[shift..], right) || aligned(&right[shift..], left) {
+            return true;
+        }
+    }
+    false
+}
+
+fn aligned(left: &[u32], right: &[u32]) -> bool {
+    let n = left.len().min(right.len()).min(64);
+    if n < 12 {
+        return false;
+    }
+    let same = (0..n).filter(|index| left[*index] == right[*index]).count();
+    same * 5 >= n * 4
+}
+
+fn group_from(reason: &str, items: &[DupItem], bucket: &[usize]) -> DupGroup {
+    let copies = bucket
+        .iter()
+        .map(|index| {
+            let item = &items[*index];
+            DupCopy {
+                path: item.path.clone(),
+                format: item.format.clone(),
+                bitrate: bitrate(item),
+                size: item.size,
+                lyrics: item.lyrics,
+                cover: item.cover,
+            }
+        })
+        .collect::<Vec<_>>();
+    let worse = copies
+        .iter()
+        .min_by_key(|copy| (quality(copy), copy.size, copy.path.clone()))
+        .map(|copy| copy.path.clone())
+        .unwrap_or_default();
+    DupGroup {
+        reason: reason.into(),
+        paths: copies.iter().map(|copy| copy.path.clone()).collect(),
+        copies,
+        worse,
+    }
+}
+
+fn bitrate(item: &DupItem) -> u32 {
+    match item.duration.filter(|value| *value > 0) {
+        Some(duration) => ((item.size.saturating_mul(8)) / duration as u64).min(u32::MAX as u64) as u32,
+        None => 0,
+    }
+}
+
+fn quality(copy: &DupCopy) -> i64 {
+    let format = match copy.format.as_str() {
+        "flac" | "wav" | "aiff" => 30,
+        "mp3" | "m4a" | "mp4" | "aac" => 20,
+        _ => 0,
+    };
+    copy.bitrate as i64 / 1000 + format + if copy.lyrics { 80 } else { 0 } + if copy.cover { 40 } else { 0 }
 }
 
 fn similar(left: &DupItem, right: &DupItem) -> bool {
@@ -141,7 +238,29 @@ mod tests {
             recording_id: recording.into(),
             size: 1000,
             broken: false,
+            format: "mp3".into(),
+            fingerprint: Vec::new(),
+            lyrics: false,
+            cover: false,
         }
+    }
+
+    #[test]
+    fn a_shared_fingerprint_groups_different_names_and_marks_the_worse_copy() {
+        let mut kept = item("good.mp3", "I'll Keep Coming", "Low Roar", 180, "");
+        kept.fingerprint = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        kept.size = 4_000_000;
+        kept.lyrics = true;
+        kept.cover = true;
+        let mut worse = item("rip.opus", "keep coming live rip", "uploader", 181, "");
+        worse.fingerprint = kept.fingerprint.clone();
+        worse.format = "opus".into();
+        worse.size = 400_000;
+        let groups = duplicate_groups(&[kept, worse]);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].reason, "fingerprint");
+        assert_eq!(groups[0].worse, "rip.opus");
+        assert!(groups[0].copies.iter().any(|copy| copy.lyrics && copy.cover));
     }
 
     #[test]

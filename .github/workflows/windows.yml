@@ -44,8 +44,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "segredo TAURI_SIGNING_PRIVATE_KEY ausente. o instalador sai sem manifesto assinado."
-            exit 0
+            echo "segredo TAURI_SIGNING_PRIVATE_KEY ausente. a atualização não pode ser assinada."
+            echo "esse segredo é a chave privada que corresponde a packaging/updater.pub e a plugins.updater.pubkey em src-tauri/tauri.conf.json."
+            echo "se a chave privada se perdeu, gere outro par com: npx tauri signer generate -w packaging/updater.key -f"
+            echo "guarde o conteúdo privado no segredo TAURI_SIGNING_PRIVATE_KEY."
+            echo "se o gerador pediu senha, guarde em TAURI_SIGNING_PRIVATE_KEY_PASSWORD."
+            echo "substitua packaging/updater.pub e plugins.updater.pubkey pela nova chave pública."
+            exit 1
           fi
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
             unset TAURI_SIGNING_PRIVATE_KEY_PASSWORD
