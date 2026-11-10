@@ -678,6 +678,14 @@ pub fn parse_lrclib_payload(body: &str) -> Vec<LrclibTrack> {
     }
 }
 
+/// Synced lyrics for another recording are rejected when both durations are known and differ by more than 3 seconds.
+pub fn lyric_duration_ok(wanted: Option<u32>, got: Option<u32>) -> bool {
+    match (wanted, got) {
+        (Some(wanted), Some(got)) => wanted.abs_diff(got) <= 3,
+        _ => true,
+    }
+}
+
 pub fn pick_lrclib(tracks: &[LrclibTrack], duration: Option<u32>) -> Option<&LrclibTrack> {
     if tracks.is_empty() {
         return None;
@@ -690,6 +698,9 @@ pub fn pick_lrclib(tracks: &[LrclibTrack], duration: Option<u32>) -> Option<&Lrc
                 continue;
             };
             let delta = candidate.abs_diff(duration);
+            if !lyric_duration_ok(Some(duration), Some(candidate)) {
+                continue;
+            }
             let better = match best {
                 None => true,
                 Some(current) => {
@@ -702,9 +713,7 @@ pub fn pick_lrclib(tracks: &[LrclibTrack], duration: Option<u32>) -> Option<&Lrc
                 best_delta = delta;
             }
         }
-        if let Some(track) = best {
-            return Some(track);
-        }
+        return best;
     }
     tracks
         .iter()
@@ -1519,6 +1528,14 @@ mod tests {
         let any = pick_lrclib(&tracks, None).unwrap();
         assert_eq!(any.track_name, "A");
         assert!(pick_lrclib(&[], Some(1)).is_none());
+        assert_eq!(pick_lrclib(&tracks, Some(100)).unwrap().track_name, "A");
+        assert!(pick_lrclib(&tracks, Some(150)).is_none());
+        assert!(lyric_duration_ok(Some(180), Some(183)));
+        assert!(!lyric_duration_ok(Some(180), Some(184)));
+        assert!((parse_lrc("[offset:+500]\n[00:01.50]oi").lines[0].at - 2.0).abs() < 0.001);
+        let fractions = parse_lrc("[00:00.50]a\n[00:00.005]b");
+        assert!((fractions.lines[0].at - 0.005).abs() < 0.0001);
+        assert!((fractions.lines[1].at - 0.50).abs() < 0.001);
     }
 
     #[test]

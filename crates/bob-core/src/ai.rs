@@ -183,23 +183,37 @@ pub fn description_overlap(query: &str, document: &str) -> f64 {
 
 pub fn lrc_from_transcript(body: &str) -> String {
     let mut out = String::from("[by:gerada por IA]\n");
-    let mut stamp = 0.0f64;
     for line in body.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        if line.starts_with('[') && line.contains(']') {
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        }
-        let minutes = (stamp / 60.0) as u32;
-        let seconds = stamp - f64::from(minutes) * 60.0;
-        out.push_str(&format!("[{minutes:02}:{seconds:05.2}]{line}\n"));
-        stamp += 4.0;
+        out.push_str(line);
+        out.push('\n');
     }
     out
+}
+
+/// Why a model cannot run, including when the block lifts.
+pub fn explain_block(model: &str, use_: &ModelUse, now: i64) -> String {
+    if now < use_.cooldown_until {
+        let left = use_.cooldown_until.saturating_sub(now).max(1);
+        return format!("cota do modelo {model} atingida. libera em {left}s");
+    }
+    let day = utc_day(now);
+    if use_.day == day && (use_.requests > 0 || use_.minute_count > 0) {
+        return format!("cota do modelo {model} atingida. libera à meia-noite utc");
+    }
+    format!("cota do modelo {model} atingida. libera à meia-noite utc")
+}
+
+pub fn explain_status(model: &str, status: u16) -> String {
+    match status {
+        401 | 403 => "sem chave do gemini, ou a chave foi recusada".into(),
+        429 => format!("cota do modelo {model} atingida. libera em 60s"),
+        0 => "sem internet".into(),
+        _ => format!("resposta inválida do modelo {model} ({status})"),
+    }
 }
 
 pub fn wrapped_fallback(period: &str, minutes: f64, artist: &str, track: &str) -> String {
@@ -259,10 +273,27 @@ mod tests {
     }
 
     #[test]
+    fn a_blocked_model_says_when_it_resets() {
+        let now = 1_700_000_000;
+        let mut use_ = ModelUse::fresh(&utc_day(now));
+        note_429(&mut use_, now);
+        let message = explain_block("gemini-3.5-flash-lite", &use_, now);
+        assert!(message.contains("gemini-3.5-flash-lite"));
+        assert!(message.contains("60s") || message.contains("libera"));
+        assert!(explain_status("gemini-3.5-flash-lite", 429).contains("60s"));
+        assert!(explain_status("gemini-3.5-flash-lite", 401).contains("chave"));
+        assert_eq!(explain_status("gemini-3.5-flash-lite", 0), "sem internet");
+    }
+
+    #[test]
     fn transcript_is_marked_as_generated() {
         let lrc = lrc_from_transcript("primeira linha\n[00:08.00]segunda");
         assert!(lrc.starts_with("[by:gerada por IA]"));
         assert!(lrc.contains("[00:08.00]segunda"));
+        assert!(lrc.contains("primeira linha"));
+        assert!(!lrc.contains("[00:00.00]primeira"));
+        let plain = crate::parse_lrc(&lrc_from_transcript("só texto\nsem tempo"));
+        assert!(!plain.has_timestamps);
     }
 
     #[test]

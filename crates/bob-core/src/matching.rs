@@ -1,4 +1,4 @@
-use crate::{clean_artist_query, clean_track_query, parse_lrc, LrclibQuery, LrclibTrack};
+use crate::{clean_artist_query, clean_track_query, lyric_duration_ok, parse_lrc, LrclibQuery, LrclibTrack};
 
 pub const LYRIC_ACCEPT: i32 = 58;
 pub const LYRIC_LIST: i32 = 36;
@@ -423,6 +423,9 @@ pub fn score_lrclib(query: &LrclibQuery, track: &LrclibTrack) -> i32 {
 pub fn best_lrclib<'a>(tracks: &'a [LrclibTrack], query: &LrclibQuery) -> Option<&'a LrclibTrack> {
     let mut best: Option<(&LrclibTrack, i32)> = None;
     for track in tracks {
+        if !lyric_duration_ok(query.duration, track.duration) {
+            continue;
+        }
         let score = score_lrclib(query, track);
         if score < LYRIC_ACCEPT {
             continue;

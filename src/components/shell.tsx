@@ -7,6 +7,7 @@ import { ConfirmDialog, NotesDialog } from "./ui/dialog"
 import { Logo } from "./logo"
 import { NowPlaying } from "./now-playing"
 import { PlayerEngine } from "./player-engine"
+import { AiActivity } from "./ai-activity"
 
 const NAV: { id: Page; key: Key }[] = [
   { id: "home", key: "nav_download" },
@@ -77,6 +78,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <div className="mt-auto px-3 pt-6">
           <ToolLine name="yt-dlp" phase={app.tools.ytdlp} />
           <ToolLine name="ffmpeg" phase={app.tools.ffmpeg} />
+          <AiActivity />
         </div>
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">

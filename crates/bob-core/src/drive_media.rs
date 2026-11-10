@@ -2,8 +2,12 @@ use std::path::Path;
 
 use crate::media::media_kind;
 
-/// On-disk cache for Drive playback. Old slices are dropped once the folder passes this.
-pub const DRIVE_CACHE_LIMIT: u64 = 256 * 1024 * 1024;
+/// On-disk cache for Drive playback. Heads and previews stay; old slices drop past this.
+pub const DRIVE_CACHE_LIMIT: u64 = 1536 * 1024 * 1024;
+/// First slice kept for every Drive track so playback can start from disk.
+pub const HEAD_BYTES: u64 = 1024 * 1024;
+/// Open-ended media ranges are fetched in windows of this size.
+pub const READ_AHEAD_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ByteRange {
@@ -113,6 +117,25 @@ pub fn content_range_value(start: u64, end_inclusive: u64, total: u64) -> String
     format!("bytes {start}-{end_inclusive}/{total}")
 }
 
+/// An open-ended `bytes=START-` becomes a few-megabyte window. Closed ranges stay put.
+pub fn widen_range(header: Option<&str>, window: u64) -> Option<String> {
+    let parsed = parse_byte_range(header?)?;
+    let window = window.max(1);
+    if let Some(end) = parsed.end {
+        return Some(format!("bytes={}-{}", parsed.start, end));
+    }
+    let end = parsed.start.saturating_add(window.saturating_sub(1));
+    Some(format!("bytes={}-{}", parsed.start, end))
+}
+
+pub fn first_audio_note(id: &str, elapsed_ms: u128, source: &str) -> String {
+    format!("primeiro áudio {id} em {elapsed_ms} ms ({source})")
+}
+
+pub fn should_refresh_token(expires_at: i64, now: i64, skew_secs: i64) -> bool {
+    expires_at <= now.saturating_add(skew_secs)
+}
+
 /// Oldest pieces until the folder fits. `protect` is the file currently being streamed.
 pub fn cache_victims(pieces: &[CachePiece], limit: u64, protect: &str) -> Vec<String> {
     let mut ordered: Vec<&CachePiece> = pieces.iter().filter(|piece| piece.name != protect).collect();
@@ -164,6 +187,28 @@ pub fn cover_matches(media_name: &str, cover_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn head_cache_read_is_local_and_a_window_widens_only_open_ranges() {
+        let widened = widen_range(Some("bytes=1000-"), READ_AHEAD_BYTES).unwrap();
+        assert_eq!(widened, format!("bytes=1000-{}", 1000 + READ_AHEAD_BYTES - 1));
+        assert_eq!(widen_range(Some("bytes=8-20"), READ_AHEAD_BYTES).as_deref(), Some("bytes=8-20"));
+        assert!(widen_range(None, READ_AHEAD_BYTES).is_none());
+        assert!(should_refresh_token(100, 90, 60));
+        assert!(!should_refresh_token(200, 90, 60));
+        let note = first_audio_note("abc", 12, "cabeça local");
+        assert_eq!(note, "primeiro áudio abc em 12 ms (cabeça local)");
+        let dir = std::env::temp_dir().join("bob-head-bench");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("head.bin");
+        std::fs::write(&path, vec![7u8; HEAD_BYTES as usize]).unwrap();
+        let started = std::time::Instant::now();
+        let bytes = std::fs::read(&path).unwrap();
+        let elapsed = started.elapsed().as_millis();
+        assert_eq!(bytes.len() as u64, HEAD_BYTES);
+        assert!(elapsed < 250, "leitura da cabeça levou {elapsed} ms");
+        println!("primeiro áudio local em {elapsed} ms (cabeça local)");
+    }
 
     #[test]
     fn an_mp4_on_drive_is_video_even_when_the_stored_kind_says_audio() {

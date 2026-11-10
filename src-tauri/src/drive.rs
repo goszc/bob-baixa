@@ -117,39 +117,101 @@ fn now_secs() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+fn redirect_policy() -> reqwest::redirect::Policy {
+    // 308 is "Resume Incomplete" on a Drive upload, not a redirect.
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.status() == reqwest::StatusCode::PERMANENT_REDIRECT {
+            attempt.stop()
+        } else if attempt.previous().len() >= 5 {
+            attempt.error("muitos redirecionamentos")
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
 fn http() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .user_agent(concat!("bob-baixa/", env!("CARGO_PKG_VERSION")))
-        // 308 is "Resume Incomplete" on a Drive upload, not a redirect.
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.status() == reqwest::StatusCode::PERMANENT_REDIRECT {
-                attempt.stop()
-            } else if attempt.previous().len() >= 5 {
-                attempt.error("muitos redirecionamentos")
-            } else {
-                attempt.follow()
-            }
-        }))
-        .build()
-        .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(120))
+                .connect_timeout(Duration::from_secs(8))
+                .pool_max_idle_per_host(8)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .http2_adaptive_window(true)
+                .tcp_keepalive(Duration::from_secs(30))
+                .user_agent(concat!("bob-baixa/", env!("CARGO_PKG_VERSION")))
+                .redirect(redirect_policy())
+                .build()
+                .unwrap_or_else(|_| reqwest::blocking::Client::new())
+        })
+        .clone()
 }
 
 fn http_stream() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(15))
-        .user_agent(concat!("bob-baixa/", env!("CARGO_PKG_VERSION")))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.status() == reqwest::StatusCode::PERMANENT_REDIRECT {
-                attempt.stop()
-            } else if attempt.previous().len() >= 5 {
-                attempt.error("muitos redirecionamentos")
-            } else {
-                attempt.follow()
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .connect_timeout(Duration::from_secs(8))
+                .pool_max_idle_per_host(8)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .http2_adaptive_window(true)
+                .tcp_keepalive(Duration::from_secs(30))
+                .user_agent(concat!("bob-baixa/", env!("CARGO_PKG_VERSION")))
+                .redirect(redirect_policy())
+                .build()
+                .unwrap_or_else(|_| reqwest::blocking::Client::new())
+        })
+        .clone()
+}
+
+/// One shared HTTP/2 client. A 401 refreshes the token once. A 403/429 waits and retries once.
+pub(crate) fn stream_get(url: &str, range: Option<&str>) -> Result<reqwest::blocking::Response, String> {
+    let mut refreshed = false;
+    let mut waited = false;
+    loop {
+        let access = bearer(refreshed)?;
+        let started = std::time::Instant::now();
+        let mut request = http_stream().get(url).header("authorization", auth(&access.token));
+        if let Some(range) = range {
+            request = request.header("range", range);
+        }
+        let response = match request.send() {
+            Ok(response) => response,
+            Err(error) => {
+                let offline = error.is_connect() || error.is_timeout() || error.is_request();
+                log_drive(&format!("stream erro {error}"));
+                if offline && !waited {
+                    log_drive("stream sem rede, tentando de novo");
+                    std::thread::sleep(Duration::from_millis(400));
+                    waited = true;
+                    continue;
+                }
+                return Err(if offline { "sem internet".into() } else { error.to_string() });
             }
-        }))
-        .build()
-        .unwrap_or_else(|_| reqwest::blocking::Client::new())
+        };
+        let status = response.status().as_u16();
+        log_drive(&format!("stream status {status} em {} ms", started.elapsed().as_millis()));
+        if status == 401 && !refreshed {
+            log_drive("stream 401, renovando o token");
+            refreshed = true;
+            continue;
+        }
+        if matches!(status, 403 | 429) && !waited {
+            log_drive(&format!("stream {status}, esperando"));
+            std::thread::sleep(Duration::from_millis(800));
+            waited = true;
+            refreshed = true;
+            continue;
+        }
+        if status == 200 || status == 206 {
+            return Ok(response);
+        }
+        log_drive(&format!("stream recusado {status}"));
+        return Err(format!("drive recusou o áudio ({status})"));
+    }
 }
 
 mod drive_play;
@@ -185,9 +247,21 @@ pub fn boot(app: tauri::AppHandle) {
     if started().swap(true, Ordering::Relaxed) {
         return;
     }
-    let app = app.clone();
     log_drive("worker de envio iniciado");
-    let _ = std::thread::Builder::new().name("drive-upload".into()).spawn(move || worker(app));
+    for index in 0..3 {
+        let app = app.clone();
+        let _ = std::thread::Builder::new()
+            .name(format!("drive-upload-{index}"))
+            .spawn(move || worker(app));
+    }
+    let _ = std::thread::Builder::new().name("drive-token".into()).spawn(|| {
+        loop {
+            std::thread::sleep(Duration::from_secs(30));
+            if load_token().is_some() {
+                let _ = bearer(false);
+            }
+        }
+    });
 }
 
 fn persist_queue() {
@@ -703,6 +777,21 @@ pub fn enqueue_local(app: &tauri::AppHandle, file: &Path, title: &str, artist: &
     persist_queue();
 }
 
+fn claim_upload() -> Option<Upload> {
+    let mut queue = queue_lock().lock().ok()?;
+    let now = now_secs();
+    let states: Vec<DriveUploadState> = queue.iter().map(Upload::state).collect();
+    let index = bob_core::claim_index(&states, now)?;
+    let mut item = queue[index].clone();
+    let mut state = item.state();
+    state.begin(state.total);
+    item.apply_state(&state);
+    queue[index] = item.clone();
+    drop(queue);
+    persist_queue();
+    Some(item)
+}
+
 fn worker(app: tauri::AppHandle) {
     loop {
         std::thread::sleep(Duration::from_secs(1));
@@ -711,13 +800,7 @@ fn worker(app: tauri::AppHandle) {
             continue;
         }
         release_blocked();
-        let next = {
-            let Ok(queue) = queue_lock().lock() else { continue };
-            let now = now_secs();
-            let states: Vec<DriveUploadState> = queue.iter().map(Upload::state).collect();
-            bob_core::claim_index(&states, now).map(|index| queue[index].clone())
-        };
-        let Some(mut item) = next else { continue };
+        let Some(mut item) = claim_upload() else { continue };
         let path = item.path.clone();
         log_drive(&format!("enviando {}", file_label(&path)));
         match upload_item(&item) {
@@ -1446,7 +1529,7 @@ fn log_path() -> PathBuf {
     root_dir().lock().map(|dir| dir.join("drive.log")).unwrap_or_else(|_| PathBuf::from("drive.log"))
 }
 
-fn log_drive(line: &str) {
+pub(crate) fn log_drive(line: &str) {
     let path = log_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -1467,12 +1550,60 @@ pub async fn drive_tracks() -> Result<Vec<DriveTrack>, String> {
     if !enabled() {
         return Ok(Vec::new());
     }
-    let Some(token) = load_token() else {
+    Ok(read_drive_index())
+}
+
+#[tauri::command]
+pub async fn drive_refresh() -> Result<Vec<DriveTrack>, String> {
+    if !enabled() {
         return Ok(Vec::new());
+    }
+    let Some(token) = load_token() else {
+        return Ok(read_drive_index());
     };
     tokio::task::spawn_blocking(move || list_tracks(&token))
         .await
         .map_err(|error| error.to_string())?
+}
+
+fn read_drive_index() -> Vec<DriveTrack> {
+    let Ok(dir) = root_dir().lock() else {
+        return Vec::new();
+    };
+    if dir.as_os_str().is_empty() {
+        return Vec::new();
+    }
+    let Ok(text) = std::fs::read_to_string(dir.join("drive-index.json")) else {
+        return Vec::new();
+    };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+#[tauri::command]
+pub async fn save_listens(json: String) -> Result<(), String> {
+    let Ok(dir) = root_dir().lock() else {
+        return Ok(());
+    };
+    if dir.as_os_str().is_empty() {
+        return Ok(());
+    }
+    let path = dir.join("listening.json");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = json.chars().take(2_000_000).collect::<String>();
+    std::fs::write(path, json).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn load_listens() -> Result<String, String> {
+    let Ok(dir) = root_dir().lock() else {
+        return Ok(String::new());
+    };
+    if dir.as_os_str().is_empty() {
+        return Ok(String::new());
+    }
+    Ok(std::fs::read_to_string(dir.join("listening.json")).unwrap_or_default())
 }
 
 fn list_tracks(token: &Token) -> Result<Vec<DriveTrack>, String> {

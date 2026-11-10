@@ -23,6 +23,7 @@ import {
   type SleepMode,
 } from "../lib/music"
 import { invoke, isTauri } from "../lib/api"
+import { runAi } from "../lib/ai-activity"
 import { discoverySplit } from "../lib/discover"
 import { clearPlayback, playNext, playTracks, queueTracks, rememberLibrary } from "../lib/player"
 import { enqueueItems, requestDeleteTrack, useApp, useT } from "../store"
@@ -86,10 +87,13 @@ export function LibraryPanel({
   async function radio(track: Track) {
     if (isTauri()) {
       try {
-        const paths = await invoke<string[]>("ai_similar", {
-          path: track.path,
-          tracks: tracks.slice(0, 180).map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, lyrics: "" })),
-        })
+        const paths = await runAi(t("ai_similar"), "gemini-embedding-2", () =>
+          invoke<string[]>("ai_similar", {
+            path: track.path,
+            tracks: tracks.slice(0, 180).map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, lyrics: "" })),
+          }),
+          (found) => (found.length > 1 ? `${found.length - 1}` : "sem chave, usei a rádio local"),
+        )
         const list = paths.map((path) => tracks.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
         if (list.length > 1) {
           playTracks(list, 0, true)
@@ -166,14 +170,22 @@ export function LibraryPanel({
             className="mb-3 text-left text-[12px] text-muted hover:text-ink"
             onClick={() => {
               if (!isTauri()) return
-              void invoke<string[]>("ai_describe", {
-                query,
-                tracks: tracks.slice(0, 180).map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, lyrics: "" })),
-              }).then((paths) => {
-                const list = paths.map((path) => tracks.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
-                setDescribed(list)
-                setView("tracks")
-              })
+              void runAi(
+                t("ai_describe"),
+                "gemini-embedding-2",
+                () =>
+                  invoke<string[]>("ai_describe", {
+                    query,
+                    tracks: tracks.slice(0, 180).map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, lyrics: "" })),
+                  }),
+                (found) => `${found.length}`,
+              )
+                .then((paths) => {
+                  const list = paths.map((path) => tracks.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
+                  setDescribed(list)
+                  setView("tracks")
+                })
+                .catch(() => {})
             }}
           >
             {t("player_describe")}
@@ -427,15 +439,23 @@ function Studio({ tracks }: { tracks: Track[] }) {
 
   async function mood(name: string) {
     if (!isTauri()) return
-    const paths = await invoke<string[]>("mood_mix", { mood: name, library: rows })
-    playPaths(paths)
+    try {
+      const paths = await runAi(t("ai_mood"), "gemini-3.5-flash-lite", () => invoke<string[]>("mood_mix", { mood: name, library: rows }), (found) => `${found.length}`)
+      playPaths(paths)
+    } catch {
+      /* the activity panel keeps the error */
+    }
   }
 
   async function askQueue() {
     if (!isTauri() || !ask.trim()) return
-    const paths = await invoke<string[]>("natural_queue", { text: ask, library: rows })
-    playPaths(paths)
-    setNote(paths.length ? "" : t("lyrics_empty"))
+    try {
+      const paths = await runAi(t("ai_thinking"), "gemini-3.5-flash-lite", () => invoke<string[]>("natural_queue", { text: ask, library: rows }), (found) => `${found.length}`)
+      playPaths(paths)
+      setNote(paths.length ? `${paths.length}` : t("lyrics_empty"))
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : t("lyrics_empty"))
+    }
   }
 
   async function discover() {

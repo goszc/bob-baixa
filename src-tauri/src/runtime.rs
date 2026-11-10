@@ -1904,9 +1904,16 @@ fn clipboard_url() -> Option<String> {
 
 fn start_http(app: AppHandle) {
     std::thread::spawn(move || {
-        let Ok(server) = tiny_http::Server::http("127.0.0.1:47821") else {
-            return;
+        loop {
+        let server = match tiny_http::Server::http("127.0.0.1:47821") {
+            Ok(server) => server,
+            Err(error) => {
+                crate::drive::log_drive(&format!("proxy não abriu: {error}"));
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                continue;
+            }
         };
+        crate::drive::log_drive("proxy ouvindo em 127.0.0.1:47821");
         for mut request in server.incoming_requests() {
             let method = request.method().as_str().to_string();
             let url = request.url().to_string();
@@ -1968,6 +1975,7 @@ fn start_http(app: AppHandle) {
                         let _ = request.respond(response);
                     }
                     Err(message) => {
+                        crate::drive::log_drive(&format!("proxy {id}: {message}"));
                         let _ = request.respond(tiny_http::Response::from_string(message).with_status_code(tiny_http::StatusCode(502)));
                     }
                 }
@@ -2018,6 +2026,8 @@ fn start_http(app: AppHandle) {
                 .with_header(header("Access-Control-Allow-Headers", "content-type"))
                 .with_header(header("Content-Type", "application/json"));
             let _ = request.respond(response);
+        }
+        crate::drive::log_drive("proxy encerrou, reiniciando");
         }
     });
 }

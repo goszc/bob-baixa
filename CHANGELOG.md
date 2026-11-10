@@ -1,5 +1,14 @@
 # changelog
 
+## 0.6.2
+
+- a letra segue o elemento que está soando no crossfade. um desvio de mais de 3 segundos rejeita a letra sincronizada de outra gravação. a transcrição da ia só marca tempo quando o modelo devolveu tempo. dá para adiantar ou atrasar 0,5 s, e o ajuste fica na biblioteca local
+- se o drive recusar o áudio, o proxy renova o token, espera num 403 e volta sozinho se a thread cair. a faixa tenta de novo, e se ainda falhar passa para a próxima com um aviso
+- a retrospectiva grava escuta local, offline e do drive, inclusive vídeo. minutos, faixas, artistas, álbuns, sequência e meses aparecem sem gemini. o texto da ia só entra com chave, e o erro aparece na tela
+- o drive reaproveita a conexão, lê a biblioteca do índice local e guarda o primeiro megabyte de cada faixa. o restante chega em janelas de 4 MB, com cache de cerca de 1,5 GB. o tempo até o primeiro áudio fica no drive.log
+- cada ação de ia mostra o que está fazendo, o modelo, a duração e o erro em português. o painel de atividade fica na barra
+- o player separa capa ou vídeo, controles e uma barra de ações. no modo cinema com letra o vídeo ocupa 7/9 e a letra 2/9, também em tela cheia. o mini player tem faixa e quadrado, opacidade e posição lembrada
+
 ## 0.6.1
 
 - ouvir no celular publica pelo github pages. o login usa um cliente oauth do tipo aplicativo da web, separado do cliente desktop, com o modelo de token do google identity services e o escopo drive.file. os dois clientes precisam estar no mesmo projeto para a página ver as faixas que o programa enviou

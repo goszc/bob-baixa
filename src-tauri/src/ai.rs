@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use bob_core::{
     allowed, cosine, description_overlap, embed_document, estimate_tokens, extended_path, lrc_from_transcript, note_429,
-    note_success, utc_day, wrapped_fallback, Config, ModelUse, Route, Slot,
+    note_success, utc_day, Config, ModelUse, Route, Slot,
 };
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -65,10 +65,10 @@ pub async fn ai_wrapped(app: tauri::AppHandle, period: String, minutes: f64, art
     let facts = format!("período: {period}\nminutos: {:.0}\nartista: {artist}\nfaixa: {track}", minutes);
     let prompt = format!("escreva um resumo curto e divertido, em português brasileiro, no estilo wrapped, só com estes fatos:\n{facts}");
     let (config, dir) = context(&app).await;
-    if let Some(text) = flash(&config, &dir, &prompt, 400).await {
-        return Ok(text);
+    match flash_result(&config, &dir, &prompt, 400).await {
+        Ok(text) => Ok(text),
+        Err(message) => Err(message),
     }
-    Ok(wrapped_fallback(&period, minutes, &artist, &track))
 }
 
 #[tauri::command]
@@ -178,7 +178,7 @@ async fn transcribe(app: &tauri::AppHandle, path: &str, manual: bool) -> Result<
     let model = config.gemini_transcribe.clone();
     let use_ = ledger.models.entry(model.clone()).or_insert_with(|| ModelUse::fresh(&day));
     if !allowed(use_, Slot::Transcribe, now, 1000) {
-        return Err("o modelo de transcrição chegou no limite de hoje.".into());
+        return Err(bob_core::explain_block(&model, use_, now));
     }
     let ffmpeg = {
         app.state::<AppState>()
@@ -232,18 +232,18 @@ async fn transcribe(app: &tauri::AppHandle, path: &str, manual: bool) -> Result<
         }
         Err(status) => {
             if status == 429 {
-                let use_ = ledger.models.entry(model).or_insert_with(|| ModelUse::fresh(&utc_day(now)));
+                let use_ = ledger.models.entry(model.clone()).or_insert_with(|| ModelUse::fresh(&utc_day(now)));
                 note_429(use_, now);
                 save(&dir, &ledger);
             }
-            Err("não consegui transcrever agora.".into())
+            Err(bob_core::explain_status(&model, status))
         }
     }
 }
 
 pub async fn complete_json(app: &tauri::AppHandle, prompt: &str) -> Option<Value> {
     let (config, dir) = context(app).await;
-    let text = flash_body(&config, &dir, prompt, estimate_tokens(prompt.len()), true).await?;
+    let text = flash_body(&config, &dir, prompt, estimate_tokens(prompt.len()), true).await.ok()?;
     bob_core::parse_model_json(&text).ok()
 }
 
@@ -282,39 +282,53 @@ async fn bulk(config: &Config, dir: &Path, prompt: &str, tokens: u32) -> Option<
 }
 
 async fn flash(config: &Config, dir: &Path, prompt: &str, tokens: u32) -> Option<String> {
+    flash_body(config, dir, prompt, tokens, false).await.ok()
+}
+
+async fn flash_result(config: &Config, dir: &Path, prompt: &str, tokens: u32) -> Result<String, String> {
     flash_body(config, dir, prompt, tokens, false).await
 }
 
-async fn flash_body(config: &Config, dir: &Path, prompt: &str, tokens: u32, json_mode: bool) -> Option<String> {
+async fn flash_body(config: &Config, dir: &Path, prompt: &str, tokens: u32, json_mode: bool) -> Result<String, String> {
     let key = stored_key();
     if key.trim().is_empty() {
-        return None;
+        return Err("sem chave do gemini".into());
     }
     let mut ledger = load(dir);
     let now = chrono::Utc::now().timestamp();
     let day = utc_day(now);
     let primary = ledger.models.get(&config.gemini_flash).cloned().unwrap_or_else(|| ModelUse::fresh(&day));
-    let fallback = ledger.models.get(&config.gemini_flash_fallback).cloned().unwrap_or_else(|| ModelUse::fresh(&day));
-    let route = bob_core::route(&primary, Some(&fallback), Slot::Flash, now, tokens);
-    let model = match route {
-        Route::Allow => config.gemini_flash.clone(),
-        Route::Fallback => config.gemini_flash_fallback.clone(),
-        Route::Heuristic => return None,
+    let fallback_use = ledger.models.get(&config.gemini_flash_fallback).cloned().unwrap_or_else(|| ModelUse::fresh(&day));
+    let route = bob_core::route(&primary, Some(&fallback_use), Slot::Flash, now, tokens);
+    let (model, fell_back) = match route {
+        Route::Allow => (config.gemini_flash.clone(), false),
+        Route::Fallback => (config.gemini_flash_fallback.clone(), true),
+        Route::Heuristic => return Err(bob_core::explain_block(&config.gemini_flash, &primary, now)),
     };
     match generate_text(&key, &model, prompt, json_mode).await {
         Ok(text) => {
-            let use_ = ledger.models.entry(model).or_insert_with(|| ModelUse::fresh(&day));
+            let use_ = ledger.models.entry(model.clone()).or_insert_with(|| ModelUse::fresh(&day));
             note_success(use_, now, estimate_tokens(prompt.len() + text.len()));
             save(dir, &ledger);
-            Some(text)
+            if fell_back {
+                Ok(format!("{text}\n\nmodelo: {model} (reserva)"))
+            } else {
+                Ok(text)
+            }
         }
-        Err(429) => {
-            let use_ = ledger.models.entry(model).or_insert_with(|| ModelUse::fresh(&day));
-            note_429(use_, now);
-            save(dir, &ledger);
-            None
+        Err(status) => {
+            if status == 429 {
+                let use_ = ledger.models.entry(model.clone()).or_insert_with(|| ModelUse::fresh(&day));
+                note_429(use_, now);
+                save(dir, &ledger);
+            }
+            let detail = bob_core::explain_status(&model, status);
+            if status == 0 {
+                Err("sem internet".into())
+            } else {
+                Err(detail)
+            }
         }
-        Err(_) => None,
     }
 }
 
