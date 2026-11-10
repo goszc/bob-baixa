@@ -9,9 +9,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bob_core::{
     chunk_step, code_challenge_s256, drive_file_link, folder_name, google_auth_url, google_token_exchange_body,
-    google_token_refresh_body, oauth_callback_code, percent_encode, sibling_lrc_paths, truncate_property, ChunkStep,
-    DrivePhase, DriveUploadState,
+    google_token_refresh_body, oauth_callback_code, percent_encode, sibling_lrc_paths, stored_refresh,
+    truncate_property, upload_metadata_json, ChunkStep, DrivePhase, DriveUploadState,
 };
+#[cfg(windows)]
+use bob_core::credential_fits;
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 use serde::{Deserialize, Serialize};
@@ -176,85 +178,379 @@ fn persist_queue() {
     }
 }
 
+struct Live {
+    token: Token,
+    source: String,
+}
+
+fn live() -> &'static Mutex<Option<Live>> {
+    static LIVE: OnceLock<Mutex<Option<Live>>> = OnceLock::new();
+    LIVE.get_or_init(|| Mutex::new(None))
+}
+
+fn secret_note() -> &'static Mutex<String> {
+    static NOTE: OnceLock<Mutex<String>> = OnceLock::new();
+    NOTE.get_or_init(|| Mutex::new(String::new()))
+}
+
+#[cfg(windows)]
+fn note_secret(message: &str) {
+    if let Ok(mut note) = secret_note().lock() {
+        *note = message.to_string();
+    }
+}
+
+fn remember(token: &Token, source: &str) {
+    if let Ok(mut slot) = live().lock() {
+        *slot = Some(Live {
+            token: token.clone(),
+            source: source.to_string(),
+        });
+    }
+}
+
+fn live_source() -> String {
+    live()
+        .lock()
+        .ok()
+        .and_then(|slot| slot.as_ref().map(|live| live.source.clone()))
+        .unwrap_or_else(|| "memória".into())
+}
+
 fn load_token() -> Option<Token> {
-    let raw = read_secret()?;
-    serde_json::from_str(&raw).ok()
+    if let Ok(slot) = live().lock() {
+        if let Some(live) = slot.as_ref() {
+            if !live.token.refresh_token.is_empty() {
+                return Some(live.token.clone());
+            }
+        }
+    }
+    let (refresh, source) = read_persisted()?;
+    let token = Token {
+        refresh_token: refresh,
+        access_token: String::new(),
+        expires_at: 0,
+        email: read_email(),
+    };
+    remember(&token, &source);
+    log_drive(&format!("refresh token lido de {source}"));
+    Some(token)
 }
 
 fn store_token(token: &Token) -> Result<(), String> {
-    let text = serde_json::to_string(token).map_err(|error| error.to_string())?;
-    write_secret(&text)?;
-    let read = read_secret().ok_or_else(|| "não consegui ler o acesso de volta no windows".to_string())?;
-    let parsed: Token = serde_json::from_str(&read).map_err(|_| "o acesso guardado está ilegível".to_string())?;
-    if parsed.refresh_token != token.refresh_token {
-        return Err("o windows não devolveu o mesmo acesso".into());
+    remember(token, "memória");
+    save_email(&token.email);
+    match save_refresh(&token.refresh_token) {
+        Ok(source) => {
+            if let Ok(mut slot) = live().lock() {
+                if let Some(live) = slot.as_mut() {
+                    live.source = source.clone();
+                }
+            }
+            log_drive(&format!("refresh token guardado e lido de volta ({source})"));
+            Ok(())
+        }
+        Err(error) => {
+            let message = if cfg!(windows) {
+                format!("não consegui ler o acesso de volta no windows: {error}. o envio desta sessão segue na memória")
+            } else {
+                format!("não consegui guardar o acesso: {error}. o envio desta sessão segue na memória")
+            };
+            log_drive(&message);
+            Err(message)
+        }
     }
-    log_drive("acesso guardado e lido de volta");
-    Ok(())
 }
 
-fn read_secret() -> Option<String> {
+fn save_refresh(refresh: &str) -> Result<String, String> {
+    if refresh.trim().is_empty() {
+        return Err("o google não devolveu o refresh token".into());
+    }
     #[cfg(windows)]
     {
-        let entry = keyring::Entry::new("bob-baixa", "google-drive").ok()?;
-        return entry.get_password().ok();
+        forget_old_credential();
+        if credential_fits(refresh) {
+            match keyring_roundtrip(refresh) {
+                Ok(()) => return Ok("keyring".into()),
+                Err(error) => {
+                    log_drive(&format!("keyring: {error}"));
+                    if let Ok(entry) = keyring_entry("google-drive-refresh") {
+                        let _ = entry.delete_credential();
+                    }
+                }
+            }
+        } else {
+            log_drive("refresh token grande demais para o gerenciador de credenciais");
+        }
+        dpapi_roundtrip(refresh)?;
+        return Ok("dpapi".into());
+    }
+    #[cfg(not(windows))]
+    {
+        file_roundtrip(refresh)?;
+        Ok("arquivo".into())
+    }
+}
+
+fn read_persisted() -> Option<(String, String)> {
+    #[cfg(windows)]
+    {
+        match keyring_get() {
+            Ok(raw) => {
+                if let Some(refresh) = stored_refresh(&raw) {
+                    return Some((refresh, "keyring".into()));
+                }
+                note_secret("o gerenciador devolveu um refresh token vazio");
+            }
+            Err(error) if secret_missing(&error) => {}
+            Err(error) => note_secret(&format!("keyring: {error}")),
+        }
+        match dpapi_get() {
+            Ok(raw) => {
+                if let Some(refresh) = stored_refresh(&raw) {
+                    return Some((refresh, "dpapi".into()));
+                }
+                note_secret("o arquivo dpapi não tinha o refresh token");
+            }
+            Err(error) if secret_missing(&error) => {}
+            Err(error) => note_secret(&format!("dpapi: {error}")),
+        }
+        return None;
     }
     #[cfg(not(windows))]
     {
         let dir = root_dir().lock().ok()?.clone();
-        std::fs::read_to_string(dir.join("drive-token.json")).ok()
+        for name in ["drive-refresh.txt", "drive-token.json"] {
+            if let Ok(raw) = std::fs::read_to_string(dir.join(name)) {
+                if let Some(refresh) = stored_refresh(&raw) {
+                    return Some((refresh, "arquivo".into()));
+                }
+            }
+        }
+        None
     }
 }
 
-fn write_secret(value: &str) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        let entry = keyring::Entry::new("bob-baixa", "google-drive").map_err(|error| error.to_string())?;
-        entry.set_password(value).map_err(|error| error.to_string())?;
-        return Ok(());
+#[cfg(windows)]
+fn secret_missing(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("no matching entry")
+        || lower.contains("não achei")
+        || lower.contains("os error 2")
+        || lower.contains("not found")
+        || lower.contains("no such file")
+}
+
+fn missing_reason() -> String {
+    secret_note()
+        .lock()
+        .ok()
+        .map(|note| note.clone())
+        .filter(|note| !note.is_empty())
+        .unwrap_or_else(|| "entre de novo na conta".into())
+}
+
+fn data_file(name: &str) -> Result<PathBuf, String> {
+    let dir = root_dir().lock().map_err(|_| "não achei a pasta do app".to_string())?.clone();
+    if dir.as_os_str().is_empty() {
+        return Err("não achei a pasta do app".into());
     }
-    #[cfg(not(windows))]
-    {
-        let dir = root_dir().lock().map_err(|_| "pasta".to_string())?.clone();
-        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-        let path = dir.join("drive-token.json");
-        std::fs::write(&path, value).map_err(|error| error.to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    Ok(dir.join(name))
+}
+
+fn save_email(email: &str) {
+    let email = email.trim();
+    if email.is_empty() {
+        return;
+    }
+    if let Ok(path) = data_file("drive-email.txt") {
+        let _ = std::fs::write(path, email);
+    }
+}
+
+fn read_email() -> String {
+    let Ok(dir) = root_dir().lock() else {
+        return String::new();
+    };
+    std::fs::read_to_string(dir.join("drive-email.txt"))
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+#[cfg(windows)]
+fn keyring_entry(user: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new("bob-baixa", user).map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn forget_old_credential() {
+    if let Ok(entry) = keyring_entry("google-drive") {
+        let _ = entry.delete_credential();
+    }
+}
+
+#[cfg(windows)]
+fn keyring_get() -> Result<String, String> {
+    keyring_entry("google-drive-refresh")?.get_password().map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn keyring_roundtrip(refresh: &str) -> Result<(), String> {
+    keyring_entry("google-drive-refresh")?
+        .set_password(refresh)
+        .map_err(|error| format!("gravar: {error}"))?;
+    let back = keyring_entry("google-drive-refresh")?
+        .get_password()
+        .map_err(|error| format!("ler: {error}"))?;
+    if back != refresh {
+        return Err("o windows não devolveu o mesmo refresh token".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn dpapi_roundtrip(refresh: &str) -> Result<(), String> {
+    let path = data_file("drive-refresh.dpapi")?;
+    let protected = dpapi_protect(refresh.as_bytes())?;
+    std::fs::write(&path, &protected).map_err(|error| error.to_string())?;
+    let back = dpapi_get()?;
+    if back != refresh {
+        return Err("o dpapi não devolveu o mesmo refresh token".into());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn dpapi_get() -> Result<String, String> {
+    let dir = root_dir().lock().map_err(|_| "não achei a pasta do app".to_string())?.clone();
+    let path = dir.join("drive-refresh.dpapi");
+    if !path.is_file() {
+        return Err("não achei o arquivo dpapi".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+    let plain = dpapi_unprotect(&bytes)?;
+    String::from_utf8(plain).map_err(|_| "o arquivo dpapi não é utf-8".into())
+}
+
+#[cfg(windows)]
+fn dpapi_protect(data: &[u8]) -> Result<Vec<u8>, String> {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Cryptography::{CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
+    unsafe {
+        let input = CRYPT_INTEGER_BLOB {
+            cbData: u32::try_from(data.len()).map_err(|_| "bloco grande demais".to_string())?,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let mut output = CRYPT_INTEGER_BLOB::default();
+        CryptProtectData(&input, windows::core::PCWSTR::null(), None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut output)
+            .map_err(|error| error.to_string())?;
+        if output.pbData.is_null() || output.cbData == 0 {
+            return Err("o windows devolveu um bloco vazio".into());
         }
-        Ok(())
+        let bytes = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        let _ = LocalFree(Some(HLOCAL(output.pbData.cast())));
+        Ok(bytes)
     }
+}
+
+#[cfg(windows)]
+fn dpapi_unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB};
+    unsafe {
+        let input = CRYPT_INTEGER_BLOB {
+            cbData: u32::try_from(data.len()).map_err(|_| "bloco grande demais".to_string())?,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let mut output = CRYPT_INTEGER_BLOB::default();
+        CryptUnprotectData(&input, None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut output)
+            .map_err(|error| error.to_string())?;
+        if output.pbData.is_null() {
+            return Err("o windows devolveu um bloco vazio".into());
+        }
+        let bytes = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        let _ = LocalFree(Some(HLOCAL(output.pbData.cast())));
+        Ok(bytes)
+    }
+}
+
+#[cfg(not(windows))]
+fn file_roundtrip(refresh: &str) -> Result<(), String> {
+    let path = data_file("drive-refresh.txt")?;
+    std::fs::write(&path, refresh).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    let back = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    if back != refresh {
+        return Err("o arquivo não devolveu o mesmo refresh token".into());
+    }
+    Ok(())
 }
 
 fn clear_secret() {
+    if let Ok(mut slot) = live().lock() {
+        *slot = None;
+    }
+    if let Ok(mut note) = secret_note().lock() {
+        note.clear();
+    }
     #[cfg(windows)]
     {
-        if let Ok(entry) = keyring::Entry::new("bob-baixa", "google-drive") {
-            let _ = entry.delete_credential();
+        for user in ["google-drive-refresh", "google-drive"] {
+            if let Ok(entry) = keyring_entry(user) {
+                let _ = entry.delete_credential();
+            }
         }
     }
-    #[cfg(not(windows))]
-    {
-        if let Ok(dir) = root_dir().lock() {
-            let _ = std::fs::remove_file(dir.join("drive-token.json"));
+    if let Ok(dir) = root_dir().lock() {
+        for name in ["drive-refresh.dpapi", "drive-refresh.txt", "drive-token.json", "drive-email.txt"] {
+            let _ = std::fs::remove_file(dir.join(name));
         }
     }
 }
 
-fn bearer(force: bool) -> Result<String, String> {
-    let mut token = load_token().ok_or_else(|| "drive desconectado".to_string())?;
+struct Access {
+    token: String,
+    source: String,
+}
+
+fn session_ready() -> Result<(), String> {
+    let token = load_token().ok_or_else(missing_reason)?;
+    if token.refresh_token.is_empty() {
+        return Err(missing_reason());
+    }
+    Ok(())
+}
+
+fn bearer(force: bool) -> Result<Access, String> {
+    let mut token = load_token().ok_or_else(|| format!("sem acesso ao drive: {}", missing_reason()))?;
+    let mut source = live_source();
     if force || token.access_token.is_empty() || token.expires_at < now_secs() + 60 {
         let email = token.email.clone();
+        let previous = token.refresh_token.clone();
         token = refresh(&token)?;
         if token.email.is_empty() {
             token.email = email;
         }
-        store_token(&token)?;
-        log_drive("acesso renovado");
+        remember(&token, "memória");
+        source = "memória".into();
+        if token.refresh_token != previous {
+            if let Err(error) = save_refresh(&token.refresh_token) {
+                log_drive(&format!("refresh token novo não foi guardado: {error}"));
+            }
+        }
+        save_email(&token.email);
+        log_drive("acesso renovado na memória");
     }
-    Ok(token.access_token)
+    Ok(Access {
+        token: token.access_token,
+        source,
+    })
 }
 
 fn refresh(token: &Token) -> Result<Token, String> {
@@ -277,12 +573,14 @@ fn refresh(token: &Token) -> Result<Token, String> {
         .and_then(|item| item.as_str())
         .filter(|value| !value.is_empty())
         .unwrap_or(token.refresh_token.as_str());
-    Ok(Token {
+    let next = Token {
         refresh_token: refresh_token.to_string(),
         access_token: access.to_string(),
         expires_at: now_secs() + expires - 30,
         email: token.email.clone(),
-    })
+    };
+    remember(&next, "memória");
+    Ok(next)
 }
 
 pub fn enqueue_local(app: &tauri::AppHandle, file: &Path, title: &str, artist: &str, album: &str, video: bool) {
@@ -325,9 +623,11 @@ pub fn enqueue_local(app: &tauri::AppHandle, file: &Path, title: &str, artist: &
 fn worker(app: tauri::AppHandle) {
     loop {
         std::thread::sleep(Duration::from_secs(1));
-        if load_token().is_none() {
+        if let Err(reason) = session_ready() {
+            block_queue(&format!("sem acesso ao drive: {reason}"));
             continue;
         }
+        release_blocked();
         let next = {
             let Ok(queue) = queue_lock().lock() else { continue };
             let now = now_secs();
@@ -441,18 +741,58 @@ async fn retarget(app: &tauri::AppHandle, from: &str, to: &str) {
     }
 }
 
+fn block_queue(reason: &str) {
+    let Ok(mut queue) = queue_lock().lock() else { return };
+    let mut changed = false;
+    for item in queue.iter_mut() {
+        let phase = DrivePhase::parse(&item.phase);
+        if phase != DrivePhase::Waiting && phase != DrivePhase::Uploading {
+            continue;
+        }
+        let mut state = item.state();
+        state.fail(reason, now_secs(), 3_600);
+        item.apply_state(&state);
+        changed = true;
+    }
+    drop(queue);
+    if changed {
+        persist_queue();
+        log_drive(reason);
+    }
+}
+
+fn release_blocked() {
+    let Ok(mut queue) = queue_lock().lock() else { return };
+    let mut changed = false;
+    for item in queue.iter_mut() {
+        if DrivePhase::parse(&item.phase) == DrivePhase::Failed && bob_core::token_gap(&item.error) {
+            let mut state = item.state();
+            state.retry();
+            item.apply_state(&state);
+            changed = true;
+        }
+    }
+    drop(queue);
+    if changed {
+        persist_queue();
+        log_drive("fila liberada com o acesso da memória");
+    }
+}
+
 fn upload_item(item: &Upload) -> Result<String, String> {
     let file = PathBuf::from(&item.path);
     if !file.is_file() {
         return Err("arquivo sumiu antes do envio".into());
     }
     note_progress(&file, 0, std::fs::metadata(&file).map(|meta| meta.len()).unwrap_or(0));
-    let mut token = bearer(false)?;
-    match upload_with(item, &file, &token) {
+    let mut access = bearer(false)?;
+    log_drive(&format!("token {}", access.source));
+    match upload_with(item, &file, &access.token) {
         Err(message) if message.contains("401") || message.contains("expirou") => {
             log_drive("acesso recusado, renovando");
-            token = bearer(true)?;
-            upload_with(item, &file, &token)
+            access = bearer(true)?;
+            log_drive(&format!("token {}", access.source));
+            upload_with(item, &file, &access.token)
         }
         other => other,
     }
@@ -504,6 +844,7 @@ fn folder(token: &str, parent: &str, name: &str) -> Result<String, String> {
         .send()
         .map_err(|error| error.to_string())?;
     let status = response.status().as_u16();
+    log_drive(&format!("buscar pasta {name} em {parent} status {status}"));
     let body = response.text().map_err(|error| error.to_string())?;
     if status == 401 {
         return Err(format!("401: {}", api_message(&body)));
@@ -517,30 +858,38 @@ fn folder(token: &str, parent: &str, name: &str) -> Result<String, String> {
         .and_then(|item| item.as_str())
         .filter(|id| !id.is_empty())
     {
+        log_drive(&format!("pasta {name} id {id}"));
         return Ok(id.to_string());
     }
+    let folder_body = serde_json::to_vec(&serde_json::json!({
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent],
+    }))
+    .map_err(|error| error.to_string())?;
     let created = http()
         .post("https://www.googleapis.com/drive/v3/files")
         .header("authorization", auth(token))
-        .json(&serde_json::json!({
-            "name": name,
-            "mimeType": "application/vnd.google-apps.folder",
-            "parents": [parent],
-        }))
+        .header("content-type", "application/json; charset=utf-8")
+        .body(folder_body)
         .send()
         .map_err(|error| error.to_string())?;
     let status = created.status().as_u16();
     let body = created.text().map_err(|error| error.to_string())?;
+    log_drive(&format!("criar pasta {name} status {status}"));
     if !(200..300).contains(&status) {
         return Err(api_error(status, &body));
     }
-    log_drive(&format!("pasta {name}"));
     let value: serde_json::Value = serde_json::from_str(&body).map_err(|error| error.to_string())?;
     value
         .get("id")
         .and_then(|item| item.as_str())
         .map(str::to_string)
         .filter(|id| !id.is_empty())
+        .map(|id| {
+            log_drive(&format!("pasta {name} id {id}"));
+            id
+        })
         .ok_or_else(|| "não criei a pasta no drive".to_string())
 }
 
@@ -553,24 +902,19 @@ fn resumable(
     props: &[(&str, &str)],
 ) -> Result<String, String> {
     let size = std::fs::metadata(file).map_err(|error| error.to_string())?.len();
-    let mut properties = serde_json::Map::new();
-    for (key, value) in props {
-        properties.insert((*key).to_string(), serde_json::Value::String((*value).to_string()));
-    }
-    let meta = serde_json::json!({
-        "name": name,
-        "parents": [parent],
-        "appProperties": properties,
-    });
+    let meta = upload_metadata_json(name, parent, props);
+    log_drive(&format!("metadata utf-8 {} bytes", meta.len()));
     let start = http()
         .post("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id")
         .header("authorization", auth(token))
+        .header("content-type", "application/json; charset=utf-8")
         .header("x-upload-content-type", mime)
         .header("x-upload-content-length", size.to_string())
-        .json(&meta)
+        .body(meta.into_bytes())
         .send()
         .map_err(|error| error.to_string())?;
     let start_status = start.status().as_u16();
+    log_drive(&format!("iniciar {name} status {start_status} bytes {size}"));
     if !(200..300).contains(&start_status) {
         let body = start.text().unwrap_or_default();
         return Err(match chunk_step(start_status, None, 0) {
@@ -588,6 +932,7 @@ fn resumable(
     if session.is_empty() {
         return Err("o drive não devolveu o endereço do envio".into());
     }
+    log_drive(&format!("sessão {session}"));
     note_progress(file, 0, size);
     if size == 0 {
         let response = http()
@@ -598,7 +943,9 @@ fn resumable(
             .body(Vec::new())
             .send()
             .map_err(|error| error.to_string())?;
-        return chunk_result(response, 0);
+        let status = response.status().as_u16();
+        log_drive(&format!("chunk bytes */0 status {status}"));
+        return chunk_result(response, status);
     }
     let mut offset = 0u64;
     let mut handle = std::fs::File::open(file).map_err(|error| error.to_string())?;
@@ -618,6 +965,7 @@ fn resumable(
             .send()
             .map_err(|error| error.to_string())?;
         let status = response.status().as_u16();
+        log_drive(&format!("chunk bytes {offset}-{end}/{size} status {status}"));
         let range = response.headers().get("range").and_then(|value| value.to_str().ok()).map(str::to_string);
         match chunk_step(status, range.as_deref(), end) {
             ChunkStep::Continue(next) => {
@@ -888,7 +1236,8 @@ pub async fn drive_retry(path: String) -> Result<(), String> {
 pub async fn drive_test(app: tauri::AppHandle) -> Result<DriveAccount, String> {
     boot(app);
     let access = bearer(false)?;
-    let account = about_account(&access)?;
+    log_drive(&format!("token {}", access.source));
+    let account = about_account(&access.token)?;
     if let Some(mut token) = load_token() {
         token.email = account.email.clone();
         let _ = store_token(&token);
@@ -1053,6 +1402,7 @@ pub fn proxy(id: &str, range: Option<&str>) -> (u16, Vec<(String, String)>, Vec<
     let Ok(token) = bearer(false) else {
         return (401, Vec::new(), b"drive".to_vec());
     };
+    let token = token.token;
     let url = format!("https://www.googleapis.com/drive/v3/files/{id}?alt=media");
     let mut request = http().get(url).header("authorization", format!("Bearer {token}"));
     if let Some(range) = range {
@@ -1111,7 +1461,7 @@ pub async fn drive_push_state(json: String) -> Result<(), String> {
 }
 
 fn push_state(json: &str) -> Result<(), String> {
-    let token = bearer(false)?;
+    let token = bearer(false)?.token;
     let root = folder(&token, "root", "bob baixa")?;
     let app_folder = folder(&token, &root, "app")?;
     let dir = root_dir().lock().map_err(|_| "pasta".to_string())?.clone();
@@ -1161,7 +1511,7 @@ pub async fn drive_pull_state() -> Result<Option<String>, String> {
 }
 
 fn pull_state() -> Result<Option<String>, String> {
-    let token = bearer(false)?;
+    let token = bearer(false)?.token;
     let root = folder(&token, "root", "bob baixa")?;
     let app_folder = folder(&token, &root, "app")?;
     let Some(id) = find_named(&token, &app_folder, "biblioteca.json")? else {

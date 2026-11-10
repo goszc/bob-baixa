@@ -1,6 +1,6 @@
 [package]
 name = "bob-baixa"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 publish = false
 description = "bob baixa"
@@ -45,13 +45,14 @@ getrandom = "0.2"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-keyring = "3"
+keyring = { version = "3", features = ["windows-native"] }
 windows = { version = "0.62", features = [
     "Foundation",
     "Media",
     "Storage_Streams",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Security_Cryptography",
     "Win32_System_Com",
     "Win32_System_WinRT",
     "Win32_UI_Shell",
