@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { Ellipsis, Heart } from "lucide-react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { Ellipsis, Heart, Play, Rows3 } from "lucide-react"
 import { groupTracks, relatedTracks, trackKey, type Track } from "../lib/library"
 import { parseM3u } from "../lib/listening"
 import {
@@ -21,8 +21,8 @@ import {
 } from "../lib/music"
 import { invoke, isTauri } from "../lib/api"
 import { runAi } from "../lib/ai-activity"
-import { playNext, playTracks, queueTracks, rememberLibrary } from "../lib/player"
-import { requestDeleteTrack, useT } from "../store"
+import { playTracks, queueTracks, rememberLibrary } from "../lib/player"
+import { go, requestDeleteTrack, useT } from "../store"
 import { cn } from "../lib/cn"
 import { CarePanel, MixList } from "./library-care"
 import { Retrospective } from "./retrospective"
@@ -45,8 +45,6 @@ const MORE: { value: LibraryView; key: "player_mix" | "player_folders" | "player
   { value: "retro", key: "player_retro" },
 ]
 
-const ROW = 56
-
 export function LibraryPanel({
   tracks,
   pending = false,
@@ -67,6 +65,8 @@ export function LibraryPanel({
   const [name, setName] = useState("")
   const [described, setDescribed] = useState<Track[] | null>(null)
   const [more, setMore] = useState(false)
+  const [density, setDensity] = useState<"compact" | "comfortable">(() => (localStorage.getItem("bob-baixa-density") === "compact" ? "compact" : "comfortable"))
+  const rowHeight = density === "compact" ? 48 : 64
   useEffect(() => {
     rememberLibrary(tracks)
   }, [tracks])
@@ -115,8 +115,7 @@ export function LibraryPanel({
       }
     }
     const list = relatedTracks(track, tracks)
-    if (list.length < 2) return
-    playTracks(list, 0, true)
+    playTracks(list.length ? list : [track], 0, true)
   }
 
   async function readFile(accept: string) {
@@ -197,6 +196,19 @@ export function LibraryPanel({
             </button>
             {more ? (
               <div className="absolute right-0 z-20 mt-1 w-40 rounded-xl border border-line bg-surface p-1 shadow-sm">
+                <button
+                  type="button"
+                  aria-label={t("density_toggle")}
+                  title={t("density_toggle")}
+                  className="grid h-9 w-full place-items-center rounded-lg text-muted hover:bg-soft hover:text-ink"
+                  onClick={() => {
+                    const next = density === "compact" ? "comfortable" : "compact"
+                    setDensity(next)
+                    localStorage.setItem("bob-baixa-density", next)
+                  }}
+                >
+                  <Rows3 className="h-4 w-4" />
+                </button>
                 {MORE.map((item) => (
                   <button
                     key={item.value}
@@ -244,10 +256,11 @@ export function LibraryPanel({
           trackList.length ? (
             <VirtualList
               count={trackList.length}
-              rowHeight={ROW}
+              rowHeight={rowHeight}
               className="h-full overflow-auto"
               render={(index) => (
                 <TrackRow
+                  index={index}
                   track={trackList[index]}
                   library={tracks}
                   onPlay={() => play(trackList, index)}
@@ -259,11 +272,20 @@ export function LibraryPanel({
           ) : (
             <div className="px-4 py-8">
               {pending && tracks.length === 0 ? (
-                <p className="text-[14px] text-muted">{t("searching")}</p>
+                <div className="space-y-2">
+                  {Array.from({ length: 6 }, (_, index) => (
+                    <div key={index} className="bone" />
+                  ))}
+                </div>
+              ) : tracks.length === 0 ? (
+                <div>
+                  <p className="text-[16px] leading-relaxed">{t("empty_library")}</p>
+                  <button type="button" className="mt-4 h-10 rounded-full px-4 text-[14px]" style={{ background: "var(--accent)", color: "#101010" }} onClick={() => go("discover")}>
+                    {t("empty_action")}
+                  </button>
+                </div>
               ) : (
-                <p className="text-[14px] text-muted">
-                  {music.view === "likes" ? t("player_no_likes") : music.view === "recent" ? t("player_no_recent") : tracks.length === 0 ? t("player_empty") : t("no_results")}
-                </p>
+                <p className="text-[14px] text-muted">{t("no_results")}</p>
               )}
             </div>
           )
@@ -300,10 +322,11 @@ export function LibraryPanel({
             </button>
             <VirtualList
               count={groupedTracks.length}
-              rowHeight={ROW}
+              rowHeight={rowHeight}
               className="min-h-0 flex-1 overflow-auto"
               render={(index) => (
                 <TrackRow
+                  index={index}
                   track={groupedTracks[index]}
                   library={tracks}
                   onPlay={() => play(groupedTracks, index)}
@@ -410,12 +433,13 @@ export function LibraryPanel({
 }
 
 function TrackRow({
+  index,
   track,
-  library,
   onPlay,
   onRadio,
   render,
 }: {
+  index: number
   track: Track
   library: Track[]
   onPlay: () => void
@@ -424,69 +448,59 @@ function TrackRow({
 }) {
   const t = useT()
   const music = useMusic()
-  const buttonRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
-  const [box, setBox] = useState<{ top: number; right: number } | null>(null)
+  const [box, setBox] = useState<{ left: number; top: number } | null>(null)
   const loved = music.likes.includes(trackKey(track.path))
-  const related = relatedTracks(track, library)
+  function place(event: { clientX: number; clientY: number; preventDefault: () => void }) {
+    event.preventDefault()
+    const width = 220
+    const height = 248
+    setBox({
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+      top: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
+    })
+    setOpen(true)
+  }
+  function addSomewhere() {
+    const id = music.playlists[0]?.id || createPlaylist("Minhas")
+    if (id) addToPlaylist(id, track.path)
+    setOpen(false)
+  }
   return (
-    <div className="flex h-full items-center gap-1 pr-2">
+    <div className="group flex h-full items-center gap-1 pr-2" onContextMenu={place}>
+      <button type="button" className="grid h-8 w-8 shrink-0 place-items-center text-muted" aria-label={t("player_play")} onClick={onPlay}>
+        <span className="text-[12px] tabular-nums group-hover:hidden">{index + 1}</span>
+        <Play className="hidden h-4 w-4 group-hover:block" />
+      </button>
       <div className="min-w-0 flex-1">{render(track, onPlay)}</div>
       <button
         type="button"
         aria-pressed={loved}
         aria-label={loved ? t("player_unlike") : t("player_like")}
-        title={loved ? t("player_unlike") : t("player_like")}
-        className={cn("grid h-8 w-8 place-items-center rounded-full hover:bg-soft", loved ? "text-ink" : "text-muted")}
+        className={cn("grid h-8 w-8 place-items-center rounded-full hover:bg-soft", loved ? "text-ink opacity-100" : "text-muted opacity-0 group-hover:opacity-100")}
         onClick={() => toggleLike(track.path)}
       >
         <Heart className="h-4 w-4" fill={loved ? "currentColor" : "none"} />
       </button>
-      <div>
-        <button
-          ref={buttonRef}
-          type="button"
-          aria-label={t("player_more")}
-          aria-expanded={open}
-          title={t("player_more")}
-          className="grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-soft hover:text-ink"
-          onClick={() => {
-            const rect = buttonRef.current?.getBoundingClientRect()
-            setBox(rect ? { top: rect.bottom + 4, right: window.innerWidth - rect.right } : null)
-            setOpen((value) => !value)
-          }}
-        >
-          <Ellipsis className="h-4 w-4" />
-        </button>
-        {open && box ? (
-          <div className="fixed z-30 w-48 rounded-xl border border-line bg-surface p-1 shadow-sm" style={{ top: box.top, right: box.right }}>
-            <MenuItem label={t("player_play_next")} onClick={() => { queueTracks([track], "next"); setOpen(false) }} />
-            <MenuItem label={t("player_add_queue")} onClick={() => { queueTracks([track], "end"); setOpen(false) }} />
-            <MenuItem label={t("player_offline")} onClick={() => { void invoke("set_offline", { path: track.path, on: true }); setOpen(false) }} />
-            <MenuItem
-              label={t("player_skip")}
-              onClick={() => {
-                const raw = JSON.parse(localStorage.getItem("bob-dislike") || "[]") as string[]
-                localStorage.setItem("bob-dislike", JSON.stringify([...raw, track.path]))
-                playNext()
-                setOpen(false)
-              }}
-            />
-            <MenuItem
-              label={t("player_radio")}
-              onClick={() => {
-                if (related.length < 2) return
-                onRadio()
-                setOpen(false)
-              }}
-            />
-            {music.playlists.map((playlist) => (
-              <MenuItem key={playlist.id} label={`${t("player_add_to_playlist")}: ${playlist.name}`} onClick={() => { addToPlaylist(playlist.id, track.path); setOpen(false) }} />
-            ))}
-            <MenuItem label={t("delete_track")} onClick={() => { requestDeleteTrack(track.path, track.title); setOpen(false) }} />
-          </div>
-        ) : null}
-      </div>
+      <button
+        type="button"
+        aria-label={t("player_more")}
+        aria-expanded={open}
+        className={cn("grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-soft hover:text-ink", open ? "opacity-100" : "opacity-0 group-hover:opacity-100")}
+        onClick={place}
+      >
+        <Ellipsis className="h-4 w-4" />
+      </button>
+      {open && box ? (
+        <div className="fixed z-30 w-[220px] rounded-xl border border-line bg-surface p-1 shadow-sm" style={{ left: box.left, top: box.top }} role="menu">
+          <MenuItem label={t("player_play_next")} onClick={() => { queueTracks([track], "next"); setOpen(false) }} />
+          <MenuItem label={t("player_add_queue")} onClick={() => { queueTracks([track], "end"); setOpen(false) }} />
+          <MenuItem label={t("player_radio_play")} onClick={() => { onRadio(); setOpen(false) }} />
+          <MenuItem label={loved ? t("player_unlike") : t("player_like")} onClick={() => { toggleLike(track.path); setOpen(false) }} />
+          <MenuItem label={t("player_add_to_playlist")} onClick={addSomewhere} />
+          <MenuItem label={t("delete_track")} onClick={() => { requestDeleteTrack(track.path, track.title); setOpen(false) }} />
+        </div>
+      ) : null}
     </div>
   )
 }

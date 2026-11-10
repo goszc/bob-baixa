@@ -115,7 +115,7 @@ function initial(): PlayerState {
     muted: readMuted(volume),
     shuffle: false,
     repeat: "off",
-    panel: "library",
+    panel: "queue",
     lyrics: null,
     lyricsState: "idle",
     error: null,
@@ -263,6 +263,8 @@ function publishMini() {
       title: displayTitle() || track?.title || "",
       artist: displayArtist() || track?.artist || "",
       cover: track?.thumbnail || "",
+      video: player.playbackKind === "video" && !player.error,
+      src: player.playbackKind === "video" ? video?.currentSrc || "" : "",
       line,
       playing: player.playing,
       currentTime: player.currentTime,
@@ -438,7 +440,7 @@ export function placeVideo() {
   if (!video || !park) return
   const host = slot && player.playbackKind === "video" && !player.error ? slot : park
   if (video.parentElement !== host) host.appendChild(video)
-  video.className = "h-full w-full bg-black object-contain"
+  video.className = "h-full w-full object-contain"
 }
 
 export function setVideoSlot(element: HTMLElement | null) {
@@ -872,6 +874,8 @@ function prefetchAhead() {
   void invoke("warm_next", { paths })
 }
 
+let radioFetch = ""
+
 function extendRadio() {
   if (!player.radio || !shelf.length) return
   const pos = player.order.indexOf(player.index)
@@ -880,7 +884,28 @@ function extendRadio() {
   if (!seed) return
   const have = new Set(player.queue.map((track) => trackKey(track.path)))
   const more = relatedTracks(seed, shelf).filter((track) => !have.has(trackKey(track.path))).slice(0, 8)
-  if (more.length) queueTracks(more, "end")
+  if (more.length) {
+    queueTracks(more, "end")
+    return
+  }
+  const query = `${seed.artist} ${seed.title}`.trim()
+  if (!query || radioFetch === query) return
+  radioFetch = query
+  void import("../store").then(({ enqueueItems, getState }) => {
+    const config = getState().config
+    const audio = config.audioOnly
+    return enqueueItems([
+      {
+        url: `ytsearch1:${query} similar`,
+        title: query,
+        audioOnly: audio,
+        container: audio ? undefined : "mp4",
+        audioFormat: audio ? config.audioFormat : undefined,
+        tagArtist: seed.artist,
+        tagAlbum: seed.album,
+      },
+    ])
+  })
 }
 
 export function playTracks(queue: Track[], index: number, radio = false) {

@@ -17,20 +17,20 @@ export function libraryFromFiles(files) {
     .map((file) => {
       const meta = props(file)
       const related = (kind) => list.find((item) => props(item).bobKind === kind && props(item).bobMedia === file.id)
-      return {
+      return normalizeTrack({
         id: file.id,
         name: file.name || "",
         title: meta.bobTitle || strip(file.name || ""),
         artist: meta.bobArtist || "",
         album: meta.bobAlbum || "",
         video: meta.bobKind === "video",
-        lyricsId: related("lyrics")?.id || "",
+        lyricsId: lyricIdFor(file, list),
         coverId: related("cover")?.id || "",
         mime: file.mimeType || "",
         size: Number(file.size || 0) || 0,
         duration: 0,
         lyrics: "",
-      }
+      })
     })
 }
 
@@ -50,7 +50,19 @@ export function mergeLibrary(files, index) {
   const rows = Array.isArray(index?.tracks) ? index.tracks : []
   const seen = new Set(fromFiles.map((track) => track.id))
   const extra = rows.filter((row) => row?.id && !seen.has(row.id)).map(rowToTrack)
-  return applyPhoneIndex([...fromFiles, ...extra], index)
+  const images = new Set(
+    (Array.isArray(files) ? files : [])
+      .filter((file) => String(file?.mimeType || "").startsWith("image/") || file?.appProperties?.bobKind === "cover")
+      .map((file) => file.id),
+  )
+  return dedupeTracks(
+    applyPhoneIndex([...fromFiles, ...extra], index).map((track) => {
+      const next = normalizeTrack(track)
+      if (images.has(next.lyricsId)) next.lyricsId = ""
+      if (!next.coverId) next.coverId = coverIdFor(next, files)
+      return next
+    }),
+  )
 }
 
 export function applyPhoneIndex(tracks, index) {
@@ -59,14 +71,19 @@ export function applyPhoneIndex(tracks, index) {
   return tracks.map((track) => {
     const row = byId.get(track.id)
     if (!row) return track
+    const coverId = text(row.coverId) || track.coverId
+    const lyricsId = safeLyricsId(text(row.lyricsId) || track.lyricsId, coverId)
+    const thumb = remoteImage(row.thumbnail) || remoteImage(row.cover) || remoteImage(track.thumb)
+    const lyrics = lyricBody(text(row.lyrics)) || lyricBody(track.lyrics)
     return {
       ...track,
       title: text(row.title) || track.title,
       artist: text(row.artist) || track.artist,
       album: text(row.album) || track.album,
-      coverId: text(row.coverId) || track.coverId,
-      lyricsId: text(row.lyricsId) || track.lyricsId,
-      lyrics: text(row.lyrics) || track.lyrics,
+      coverId,
+      thumb,
+      lyricsId,
+      lyrics,
       mime: text(row.mime) || track.mime,
       size: Number(row.size || track.size || 0) || 0,
       duration: Number(row.duration || track.duration || 0) || 0,
@@ -89,7 +106,7 @@ function rowToTrack(row) {
     mime: text(row.mime),
     size: Number(row.size || 0) || 0,
     duration: Number(row.duration || 0) || 0,
-    lyrics: text(row.lyrics),
+    lyrics: lyricBody(text(row.lyrics)),
   }
 }
 
@@ -120,7 +137,56 @@ export function mergePhoneState(local, remote) {
 
 export function stateFile(files) {
   const list = Array.isArray(files) ? files : []
-  return list.find((file) => file?.appProperties?.bobKind === "state" || file?.name === "state.json") || null
+  return (
+    list.find((file) => file?.name === "biblioteca.json" || file?.name === "state.json") ||
+    list.find((file) => file?.appProperties?.bobKind === "state") ||
+    null
+  )
+}
+
+export function trackIsLiked(likes, track) {
+  const id = text(track?.id).toLowerCase()
+  const name = text(track?.name).toLowerCase()
+  if (!id && !name) return false
+  for (const key of Array.isArray(likes) ? likes : []) {
+    const raw = text(key).toLowerCase()
+    if (!raw) continue
+    if (raw === id || raw === `drive:${id}`) return true
+    const file = raw.split(/[\\/]/).pop()
+    if (file && name && file === name) return true
+  }
+  return false
+}
+
+export function coverPlaceholder(track) {
+  const label = `${text(track?.artist)} ${text(track?.title)}`.trim() || "bob"
+  let hash = 0
+  for (const ch of label) hash = (hash * 33 + ch.charCodeAt(0)) >>> 0
+  const hue = [18, 28, 152, 188, 210, 262, 330, 48][hash % 8]
+  const letter = (text(track?.title) || text(track?.artist) || "•").slice(0, 1).toUpperCase()
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="hsl(${hue} 34% 42%)"/><circle cx="58" cy="20" r="14" fill="#fff" fill-opacity=".22"/><text x="40" y="50" text-anchor="middle" font-family="Georgia,serif" font-size="28" fill="#fff">${letter}</text></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+function coverIdFor(track, files) {
+  const id = text(track?.id)
+  if (!id) return ""
+  const list = Array.isArray(files) ? files : []
+  for (const file of list) {
+    if (!file?.id || file.id === id) continue
+    const meta = file.appProperties || {}
+    const name = String(file.name || "")
+    const image = meta.bobKind === "cover" || String(file.mimeType || "").startsWith("image/")
+    if (!image) continue
+    if (meta.bobMedia === id) return file.id
+    if (name === `${id}.jpg` || name === `${id}.png` || name === `${id}.webp` || name === `${id}.cover.jpg` || name === `${id}.cover.png`) return file.id
+  }
+  return ""
+}
+
+function remoteImage(value) {
+  const raw = text(value)
+  return /^https?:\/\//i.test(raw) || raw.startsWith("data:image/") ? raw : ""
 }
 
 function normalizeState(value) {
@@ -199,8 +265,9 @@ function mimeFor(ext, video) {
   return "application/octet-stream"
 }
 
-export function lyricLines(text) {
-  const source = String(text || "")
+export function lyricLines(value) {
+  if (!isLyricText(value)) return []
+  const source = String(value || "")
   const offsetMatch = source.match(/\[offset:\s*([+-]?\d+)\s*\]/i)
   const offset = offsetMatch ? Number(offsetMatch[1]) / 1000 : 0
   const lines = []
@@ -226,4 +293,151 @@ export function activeLyric(lines, time) {
     if (lines[index].at <= time + 0.05) found = index
   }
   return found
+}
+
+const LABELS = ["gondwana records", "sub pop", "4ad", "domino", "matador", "xl recordings", "dead oceans", "secret city"]
+
+export function foldKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+}
+
+export function isLabel(value) {
+  return LABELS.includes(foldKey(value))
+}
+
+export function presentLabel(value) {
+  const raw = String(value || "").trim()
+  if (!raw) return ""
+  const letters = raw.replace(/[^\p{L}]/gu, "")
+  if (letters.length > 2 && letters === letters.toLocaleUpperCase()) {
+    return raw.toLocaleLowerCase().replace(/(^|[\s'’\-])(\p{L})/gu, (all, lead, ch) => lead + ch.toLocaleUpperCase())
+  }
+  return raw
+}
+
+export function tidyTitle(title, artist = "") {
+  let text = String(title || "").trim()
+  text = text.replace(/\s*\[[^\]]*\]/g, "")
+  text = text.replace(/\s*[([【][^)\]】]*(official|lyric|audio|mood|video)[^)\]】]*[)\]】]/gi, "")
+  text = text.replace(/\s*[-–—]\s*official video\s*$/i, "")
+  text = text.replace(/^['"“”‘’]+|['"“”‘’]+$/g, "")
+  text = text.replace(/\s+/g, " ").trim()
+  const artistText = String(artist || "").trim()
+  for (let guard = 0; artistText && guard < 3; guard += 1) {
+    const parts = text.split(/\s+[-–—]\s+/)
+    if (parts.length > 1 && similarName(parts[0], artistText)) {
+      text = parts.slice(1).join(" - ").trim()
+      continue
+    }
+    if (foldKey(text).startsWith(foldKey(artistText)) && text.length > artistText.length + 1) {
+      text = text.slice(artistText.length).replace(/^[\s\-–—:]+/, "").trim()
+      continue
+    }
+    break
+  }
+  return presentLabel(text.replace(/^['"“”‘’]+|['"“”‘’]+$/g, "").trim())
+}
+
+export function splitDisplay(name) {
+  let raw = String(name || "").replace(/\.[a-z0-9]{2,5}$/i, "")
+  raw = raw.replace(/\s*\[[^\]]*\]/g, "")
+  raw = raw.replace(/\s*[([【][^)\]】]*(official|lyric|audio|mood|video)[^)\]】]*[)\]】]/gi, "")
+  const parts = raw.split(/\s+[-–—]\s+/).map((part) => part.replace(/^['"“”‘’]+|['"“”‘’]+$/g, "").trim()).filter(Boolean)
+  const kept = parts.filter((part) => !isLabel(part))
+  if (kept.length >= 2) {
+    const artist = presentLabel(kept[0])
+    return { artist, title: tidyTitle(kept.slice(1).join(" - "), artist) }
+  }
+  if (kept.length === 1) return { artist: "", title: tidyTitle(kept[0]) }
+  return { artist: "", title: tidyTitle(raw) }
+}
+
+export function normalizeTrack(track) {
+  const source = track && typeof track === "object" ? track : {}
+  const fromName = splitDisplay(source.name)
+  const fromTitle = splitDisplay(source.title)
+  let artist = text(source.artist)
+  let title = text(source.title)
+  const bare = String(source.name || "").replace(/\.[a-z0-9]{2,5}$/i, "")
+  const noisy = /official|\[|\]|["“”‘’]/.test(title) || ((title.match(/ [-–—] /g) || []).length > 0 && (isLabel(artist) || !artist))
+  if (!title || title === bare || title === source.name || noisy || isLabel(artist)) {
+    const parsed = fromTitle.artist || fromTitle.title ? fromTitle : fromName
+    if (parsed.artist) artist = parsed.artist
+    if (parsed.title) title = parsed.title
+    else if (fromName.title) title = fromName.title
+  }
+  if (!artist || isLabel(artist)) artist = fromName.artist || fromTitle.artist || (isLabel(artist) ? "" : artist)
+  title = tidyTitle(title, artist)
+  artist = presentLabel(artist)
+  if (!title) title = fromName.title || bare || "sem título"
+  return { ...source, title, artist }
+}
+
+export function dedupeTracks(tracks) {
+  const map = new Map()
+  for (const track of tracks || []) {
+    const artist = foldKey(track.artist)
+    const title = foldKey(track.title)
+    const key = artist && title ? `${artist}|${title}` : track.id
+    const current = map.get(key)
+    if (!current || richness(track) > richness(current)) map.set(key, track)
+  }
+  return [...map.values()]
+}
+
+export function isLyricText(value) {
+  if (typeof value !== "string") return false
+  const sample = value.replace(/^\uFEFF/, "").trim()
+  if (!sample || sample.length > 200_000) return false
+  if (sample.includes("\u0000") || sample.includes("\uFFFD")) return false
+  const head = sample.slice(0, 64)
+  if (head.startsWith("ÿØÿ") || head.startsWith("GIF8") || head.startsWith("RIFF") || head.includes("JFIF") || head.includes("PNG")) return false
+  let controls = 0
+  for (const ch of head) {
+    const code = ch.charCodeAt(0)
+    if (code < 9 || (code > 13 && code < 32)) controls += 1
+  }
+  return controls < 2
+}
+
+export function lyricIdFor(file, list) {
+  const props = (item) => item?.appProperties || {}
+  const hit = (Array.isArray(list) ? list : []).find((item) => {
+    const meta = props(item)
+    if (meta.bobMedia !== file?.id) return false
+    if (meta.bobKind === "cover") return false
+    const mime = String(item?.mimeType || "")
+    if (mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/")) return false
+    const name = String(item?.name || "")
+    return meta.bobKind === "lyrics" || /\.(lrc|txt)$/i.test(name)
+  })
+  return hit?.id || ""
+}
+
+function safeLyricsId(lyricsId, coverId) {
+  if (!lyricsId || lyricsId === coverId) return ""
+  return lyricsId
+}
+
+function lyricBody(value) {
+  return isLyricText(value) ? value.trim() : ""
+}
+
+function similarName(left, right) {
+  const a = foldKey(left)
+  const b = foldKey(right)
+  if (!a || !b) return false
+  if (a === b) return true
+  let index = 0
+  while (index < a.length && index < b.length && a[index] === b[index]) index += 1
+  return index >= 8 && Math.min(a.length, b.length) - index <= 3
+}
+
+function richness(track) {
+  return (track.lyrics ? 4 : 0) + (track.coverId ? 2 : 0) + (track.duration ? 1 : 0)
 }

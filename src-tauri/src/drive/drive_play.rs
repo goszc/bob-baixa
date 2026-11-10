@@ -940,6 +940,23 @@ fn download_to(_token: &str, id: &str, dest: &Path, size: u64) -> Result<(), Str
     Ok(())
 }
 
+pub(super) fn take_record(id: &str) -> Vec<String> {
+    let mut records = load_library();
+    let Some(index) = records.iter().position(|record| record.id == id) else {
+        return Vec::new();
+    };
+    let record = records.remove(index);
+    save_library(&records);
+    let mut extra = Vec::new();
+    if !record.cover_id.is_empty() {
+        extra.push(record.cover_id.clone());
+    }
+    if !record.lyrics_id.is_empty() && record.lyrics_id != record.cover_id {
+        extra.push(record.lyrics_id);
+    }
+    extra
+}
+
 fn find_record(id: &str) -> Option<LibraryRecord> {
     load_library().into_iter().find(|record| record.id == id)
 }

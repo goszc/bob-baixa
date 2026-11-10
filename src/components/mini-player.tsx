@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Heart, Pause, PictureInPicture2, Play, SkipBack, SkipForward, Square } from "lucide-react"
 import { isTauri } from "../lib/api"
+import { coverMark } from "../lib/thumbs"
 import { initApp } from "../store"
 
 interface MiniState {
@@ -13,6 +14,8 @@ interface MiniState {
   duration: number
   liked?: boolean
   buffering?: boolean
+  video?: boolean
+  src?: string
 }
 
 const empty: MiniState = { title: "", artist: "", cover: "", line: "", playing: false, currentTime: 0, duration: 0 }
@@ -66,6 +69,14 @@ export function MiniPlayer() {
     if (!isTauri()) return
     void resize(size)
   }, [size])
+  const videoRef = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    const node = videoRef.current
+    if (!node || !state.video) return
+    if (Math.abs(node.currentTime - state.currentTime) > 1.2) node.currentTime = state.currentTime
+    if (state.playing) void node.play().catch(() => {})
+    else node.pause()
+  }, [state.currentTime, state.playing, state.video, state.src])
   const progress = state.duration > 0 ? Math.min(100, (state.currentTime / state.duration) * 100) : 0
   const title = state.title || "bob baixa"
   const subtitle = state.buffering ? "carregando…" : state.line || state.artist
@@ -83,7 +94,11 @@ export function MiniPlayer() {
       <div data-tauri-drag-region className="absolute inset-0" />
       <div className={size === "square" ? "pointer-events-none relative flex h-full flex-col gap-3 p-3 pb-16" : "pointer-events-none relative flex h-full items-center gap-3 px-3 pb-3"}>
         <div className={size === "square" ? "min-h-0 w-full flex-1 overflow-hidden rounded-xl bg-[#222]" : "h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-[#222]"}>
-          {state.cover ? <img src={state.cover} alt="" className="h-full w-full object-cover" /> : <div className="h-full w-full bg-[#2a2a28]" />}
+          {size === "square" && state.video && state.src ? (
+            <video ref={videoRef} key={state.src} src={state.src} muted playsInline className="h-full w-full object-cover" />
+          ) : (
+            <img src={state.cover || coverMark(state.title)} alt="" className="h-full w-full object-cover" />
+          )}
         </div>
         <div className={size === "square" ? "min-w-0" : "min-w-0 flex-1 pr-[200px]"}>
           <p className="truncate text-[14px] font-medium">{title}</p>

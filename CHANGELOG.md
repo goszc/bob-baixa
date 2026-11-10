@@ -1,5 +1,31 @@
 # changelog
 
+## 0.6.7
+
+- descobrir música baixa uma faixa no formato padrão. descobrir mix cria uma playlist com 10 vídeos em 480p, a partir do que toca e do que mais toca
+- a tradução da letra continua quando se troca de tela e volta guardada na faixa
+- curtidas fica na barra, logo abaixo de início, com a quantidade
+- apagar uma faixa apaga o arquivo no Google Drive de vez e tira do índice do celular, depois de confirmar
+- a barra lateral fica em início, curtidas, buscar, biblioteca, descobrir, baixar e playlists. a cor da capa pinta o fundo e o play. a busca global, o colar de um link, o anel de download e o chip da ia ficam discretos
+- a biblioteca é uma página inteira, com a barra de baixo. o painel do player fica só com fila e letra
+- a letra em tela cheia usa o fundo da capa, a linha ativa grande e uma barra que some sozinha
+- início preenche a largura: continuar ouvindo e mais tocadas da semana
+- descobrir mostra sugestões e o que foi descoberto recentemente
+- baixar fica logo abaixo de descobrir. um campo, mp3 ou mp4 (o mesmo formato de descobrir música), a qualidade no menu e a fila com progresso, cancelar e tentar de novo
+- no celular, as capas vêm de .bob/covers e do índice, com um desenho no lugar de uma caixa vazia. a barra de baixo cabe, e curtidas lê o mesmo arquivo do computador
+- continuar ouvindo fica numa linha só. o player mostra o vídeo no lugar da capa, e a letra em tela cheia deixa a capa ou o vídeo à direita
+- o menu do botão direito abre no cursor, com seis itens. as listas mostram o play ao passar o mouse. o vídeo preenche a área. a letra tem traduzir, sincronizar e um menu
+
+## 0.6.6
+
+- o celular deixa de abrir numa tela vazia. sem sessão, o ícone, uma frase e o botão entrar aparecem na hora. com sessão vencida, a entrada silenciosa espera no máximo 3 segundos e volta ao botão, com o erro
+- a página do celular é o player: início com continuar ouvindo, mix do dia, curtidas e recentes; biblioteca em faixas, artistas, álbuns e playlists; busca que filtra ao digitar; barra mini fixa; folha de agora tocando
+- a folha cobre a tela, com capa ou vídeo, fundo borrado da arte, coração, cinco controles em ícone, progresso, fila que se reordena e letra sincronizada. arrastar para baixo fecha, arrastar a arte pula, tocar a linha busca
+- a letra não desenha mais um jpeg. vale o texto do índice ou um .lrc pelo id, e imagem, áudio ou binário é descartado
+- título grande e artista pequeno. gravadora, aspas, official video, colchetes, caixa alta e a cópia repetida saem do nome
+- o play da barra toca a última faixa ou a primeira. enquanto a biblioteca chega, a lista é um esqueleto
+- faixas recentes pequenas ficam em cache para tocar sem rede. o manifesto, os ícones e a cor seguem o app
+
 ## 0.6.5
 
 - no celular, o service worker é um script clássico, assume a página na primeira visita e só então toca. o token fica no aparelho e a entrada silenciosa acontece antes do botão. um toque na versão mostra o worker, o token e o último stream

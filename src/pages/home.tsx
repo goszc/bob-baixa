@@ -9,7 +9,11 @@ import { Switch } from "../components/ui/switch"
 import { Textarea } from "../components/ui/textarea"
 import { formatClock } from "../lib/format"
 import { liveStats } from "../lib/stats"
-import { useMusic } from "../lib/music"
+import { tracksForPaths, useMusic } from "../lib/music"
+import { playTracks } from "../lib/player"
+import { trackKey, type Track } from "../lib/library"
+import { useLibraryTracks } from "../lib/use-library"
+import { weekPaths } from "../lib/week"
 import type { Key } from "../lib/i18n"
 import { builtinPresets, configMatchesPreset } from "../lib/presets"
 import type { Quality } from "../lib/types"
@@ -24,6 +28,7 @@ import {
   dismissAllAnalyzed,
   dismissAnalyzed,
   downloadNow,
+  go,
   renamePreset,
   savePreset,
   setConfig,
@@ -48,6 +53,7 @@ const QUALITIES: { value: Quality; key: Key }[] = [
 
 export function Home() {
   const app = useApp()
+  const music = useMusic()
   const t = useT()
   const [over, setOver] = useState(false)
   const [more, setMore] = useState(false)
@@ -73,8 +79,56 @@ export function Home() {
     if (text) await appendLinks(text)
   }
 
+  const library = useLibraryTracks()
+  const recent = music.recent
+    .map((item) => library.find((track) => trackKey(track.path) === trackKey(item.path)))
+    .filter((track): track is Track => Boolean(track))
+    .slice(0, 6)
+  const weekly = tracksForPaths(weekPaths(music.events), library)
+
   return (
     <div>
+      <h1 className="text-[28px] font-medium tracking-[-0.04em]">{t("nav_home")}</h1>
+      <section className="mt-8">
+        <h2 className="text-[22px] font-medium tracking-[-0.03em]">{t("home_continue")}</h2>
+        {recent.length === 0 ? (
+          <div className="mt-4">
+            <p className="max-w-[360px] text-[16px] leading-relaxed">{t("empty_library")}</p>
+            <button type="button" className="mt-4 h-10 rounded-full px-4 text-[14px]" style={{ background: "var(--accent)", color: "#101010" }} onClick={() => go("discover")}>
+              {t("empty_action")}
+            </button>
+          </div>
+        ) : (
+          <div className="home-row mt-4">
+            {recent.map((track, index) => (
+              <button key={track.path} type="button" className="rounded-2xl bg-soft p-3 text-left" onClick={() => playTracks(recent, index)}>
+                <Thumb src={track.thumbnail} videoUrl={track.pageUrl || track.title} className="aspect-square w-full rounded-xl" />
+                <span className="mt-3 block truncate text-[14px]">{track.title}</span>
+                <span className="block truncate text-[12px] text-muted">{track.artist}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+      {weekly.length ? (
+        <section className="mt-10">
+          <h2 className="text-[22px] font-medium tracking-[-0.03em]">{t("home_weekly")}</h2>
+          <div className="home-grid mt-4">
+            <button type="button" className="flex min-h-[180px] flex-col justify-between rounded-2xl p-4 text-left" style={{ background: "color-mix(in srgb, var(--accent) 32%, var(--surface))" }} onClick={() => playTracks(weekly, 0)}>
+              <span className="text-[18px] font-medium tracking-[-0.03em]">{t("home_weekly")}</span>
+              <span className="text-[13px] text-muted">{weekly.length}</span>
+            </button>
+            {weekly.slice(0, 5).map((track, index) => (
+              <button key={track.path} type="button" className="rounded-2xl bg-soft p-3 text-left" onClick={() => playTracks(weekly, index)}>
+                <Thumb src={track.thumbnail} videoUrl={track.pageUrl || track.title} className="aspect-square w-full rounded-xl" />
+                <span className="mt-3 block truncate text-[14px]">{track.title}</span>
+                <span className="block truncate text-[12px] text-muted">{track.artist}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      <div className="mt-10">
       <PageHeader title={t("download_title")} sub={t("download_sub")} />
       <LiveCard />
       {!toolsReady ? (
@@ -267,6 +321,7 @@ export function Home() {
           </Field>
         </div>
       ) : null}
+      </div>
     </div>
   )
 }

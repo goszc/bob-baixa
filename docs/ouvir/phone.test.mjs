@@ -32,9 +32,16 @@ const api = http.createServer((req, res) => {
     const body = JSON.stringify({
       files: [
         { id: "audio1", name: 'Low Roar - "I\'ll Keep Coming".opus', mimeType: "audio/ogg", size: String(wav.length), appProperties: { bobKind: "audio" } },
+        { id: "audio1b", name: 'Low Roar - "I\'ll Keep Coming".mp3', mimeType: "audio/mpeg", size: String(wav.length), appProperties: { bobKind: "audio" } },
         { id: "video1", name: "Disappeared Completely - No Place for Me (Pt.1) - Official Video.mp4", mimeType: "video/mp4", size: String(clip.length), appProperties: { bobKind: "video" } },
+        { id: "hania", name: "Gondwana Records — Hania Rani — 'Leaving' (Official Video) [Gondwana Records].mp4", mimeType: "video/mp4", size: "12", appProperties: { bobKind: "video" } },
+        { id: "leaf", name: "Sub Pop — The Album Leaf - The Outer Banks [OFFICIAL VIDEO].mp4", mimeType: "video/mp4", size: "12", appProperties: { bobKind: "video" } },
+        { id: "caps", name: "DISAPPEARED COMPLETELY — Disappeared Completley - Once In a While (short mood video).mp3", mimeType: "audio/mpeg", size: String(wav.length), appProperties: { bobKind: "audio" } },
+        { id: "pic", name: "cover.jpg", mimeType: "image/jpeg", size: String(png.length), appProperties: { bobKind: "lyrics", bobMedia: "leaf" } },
         { id: "cover1", name: "cover.jpg", mimeType: "image/jpeg", size: String(png.length), appProperties: { bobKind: "cover", bobMedia: "audio1" } },
         { id: "index1", name: "index.json", mimeType: "application/json", size: "10", appProperties: { bobKind: "index" } },
+        { id: "state1", name: "biblioteca.json", mimeType: "application/json", size: "40", appProperties: { bobKind: "state" } },
+        { id: "coverv", name: "video1.jpg", mimeType: "image/svg+xml", size: "80", appProperties: { bobKind: "cover", bobMedia: "video1" } },
         { id: "gone", name: "broken.mp3", mimeType: "audio/mpeg", size: "10", appProperties: { bobKind: "audio" } },
       ],
     })
@@ -45,6 +52,21 @@ const api = http.createServer((req, res) => {
   const media = url.pathname.match(/^\/drive\/v3\/files\/([^/]+)$/)
   if (media && url.searchParams.get("alt") === "media") {
     const id = media[1]
+    if (id === "state1") {
+      res.writeHead(200, { ...cors(), "content-type": "application/json" })
+      res.end(JSON.stringify({
+        updatedAt: 50,
+        likes: ["drive:audio1", "drive:video1", "drive:hania", "drive:leaf"],
+        playlists: [{ name: "Noite", paths: ["audio1"] }],
+        queue: [],
+      }))
+      return
+    }
+    if (id === "coverv") {
+      res.writeHead(200, { ...cors(), "content-type": "image/svg+xml" })
+      res.end(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#3d6ea8"/></svg>`)
+      return
+    }
     if (id === "index1") {
       res.writeHead(200, { ...cors(), "content-type": "application/json" })
       res.end(JSON.stringify({
@@ -52,6 +74,9 @@ const api = http.createServer((req, res) => {
         tracks: [
           { id: "audio1", name: "keep.wav", title: "I'll Keep Coming", artist: "Low Roar", album: "0", mime: "audio/wav", size: wav.length, kind: "audio", coverId: "cover1", lyrics: "[00:00.00]keep coming" },
           { id: "video1", name: "place.mp4", title: "No Place for Me", artist: "Disappeared Completely", mime: "video/mp4", size: clip.length, kind: "video" },
+          { id: "hania", title: "Gondwana Records — Hania Rani — 'Leaving' (Official Video) [Gondwana Records]", artist: "Gondwana Records", kind: "video" },
+          { id: "leaf", title: "The Album Leaf - The Outer Banks [OFFICIAL VIDEO]", artist: "Sub Pop", kind: "video", lyricsId: "pic", lyrics: "ÿØÿà JFIF" },
+          { id: "caps", title: "DISAPPEARED COMPLETELY — Disappeared Completley - Once In a While (short mood video)", artist: "DISAPPEARED COMPLETELY", kind: "audio" },
         ],
       }))
       return
@@ -59,6 +84,11 @@ const api = http.createServer((req, res) => {
     if (id === "gone") {
       res.writeHead(403, cors())
       res.end("forbidden")
+      return
+    }
+    if (id === "pic") {
+      res.writeHead(200, { ...cors(), "content-type": "image/jpeg" })
+      res.end(png)
       return
     }
     const bytes = id === "cover1" ? png : id === "video1" ? clip : wav
@@ -112,26 +142,50 @@ async function exercise(browser, label) {
     localStorage.setItem("bob-exp", String(Date.now() + 3_600_000))
   })
   await page.goto(origin, { waitUntil: "domcontentloaded" })
-  await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).waitFor({ timeout: 20_000 })
+  await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).first().waitFor({ timeout: 20_000 })
   await page.waitForFunction(() => navigator.serviceWorker?.controller)
+  if (process.env.SHOT && label === "chromium") await page.screenshot({ path: "/opt/cursor/artifacts/phone-home-pixel.png" })
   await page.locator("#version").click()
   await page.locator("#debug").waitFor()
   const debug = await page.locator("#debug").innerText()
   assert.match(debug, /controlado/)
   assert.match(debug, /token válido/)
-  await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).click()
+  await page.locator("#version").click()
+  await page.getByRole("button", { name: "Biblioteca" }).click()
+  await page.getByRole("button", { name: "Hania Rani — Leaving" }).waitFor()
+  await page.getByRole("button", { name: "The Album Leaf — The Outer Banks" }).waitFor()
+  await page.getByRole("button", { name: "Disappeared Completely — Once In a While" }).waitFor()
+  assert.equal(await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).count(), 1)
+  if (process.env.SHOT && label === "chromium") await page.screenshot({ path: "/opt/cursor/artifacts/phone-library-pixel.png" })
   if (process.env.SHOT && label === "chromium") {
-    await page.screenshot({ path: "/opt/cursor/artifacts/phone-now-playing.png", fullPage: true })
+    await page.getByRole("button", { name: "Curtidas" }).click()
+    await page.screenshot({ path: "/opt/cursor/artifacts/phone-likes-pixel.png" })
+    await page.getByRole("button", { name: "Descobrir", exact: true }).click()
+    await page.screenshot({ path: "/opt/cursor/artifacts/phone-discover-pixel.png" })
+    await page.getByRole("button", { name: "Biblioteca" }).click()
   }
+  await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).click()
   await page.waitForFunction(() => {
     const audio = document.querySelector("#audio")
-    return audio && Number.isFinite(audio.duration) && audio.duration > 0
+    const image = document.querySelector("#cover")
+    return audio && Number.isFinite(audio.duration) && audio.duration > 0 && image && image.naturalWidth > 0
   })
-  const cover = await page.locator("#cover").evaluate((image) => image.naturalWidth)
-  assert.ok(cover > 0, `${label}: cover did not load`)
+  assert.match(await page.locator("#audio").evaluate((element) => element.currentSrc), /\/bob-baixa\/ouvir\/stream\/audio1/)
+  await page.evaluate(() => document.querySelector("#audio").pause())
+  if (process.env.SHOT && label === "chromium") {
+    await page.waitForTimeout(350)
+    await page.screenshot({ path: "/opt/cursor/artifacts/phone-now-pixel.png" })
+  }
+  await page.getByRole("tab", { name: "Letra" }).click()
   await page.getByRole("button", { name: "keep coming", exact: true }).waitFor()
-  const src = await page.locator("#audio").evaluate((element) => element.currentSrc)
-  assert.match(src, /\/bob-baixa\/ouvir\/stream\/audio1/)
+  if (process.env.SHOT && label === "chromium") await page.screenshot({ path: "/opt/cursor/artifacts/phone-lyrics-pixel.png" })
+  await page.getByRole("tab", { name: "Fila" }).click()
+  if (process.env.SHOT && label === "chromium") await page.screenshot({ path: "/opt/cursor/artifacts/phone-queue-pixel.png" })
+  await page.getByRole("button", { name: "fechar", exact: true }).click()
+  await page.getByRole("button", { name: "The Album Leaf — The Outer Banks" }).click()
+  await page.getByRole("tab", { name: "Letra" }).click()
+  assert.doesNotMatch(await page.locator("#lyric").innerText(), /JFIF|ÿØ/)
+  await page.getByRole("button", { name: "fechar", exact: true }).click()
   await page.getByRole("button", { name: "Disappeared Completely — No Place for Me" }).click()
   const canVideo = await page.evaluate(() => document.createElement("video").canPlayType('video/mp4; codecs="avc1.42E01E"'))
   if (canVideo) {
@@ -139,9 +193,14 @@ async function exercise(browser, label) {
       const video = document.querySelector("#video")
       return video && !video.hidden && video.videoWidth > 0
     })
-  } else {
+    if (process.env.SHOT && label === "chromium") await page.screenshot({ path: "/opt/cursor/artifacts/phone-video-pixel.png" })
+  }
+  await page.getByRole("button", { name: "fechar", exact: true }).click()
+  if (!canVideo) {
+    await page.locator("#version").click()
     await page.locator("#debug").waitFor()
     assert.match(await page.locator("#debug").innerText(), /206|200/)
+    await page.locator("#version").click()
   }
   await page.locator("#search").fill("broken")
   await page.getByRole("button", { name: "broken", exact: true }).click()
@@ -162,7 +221,7 @@ await quiet.addInitScript(() => {
 })
 await quiet.route("https://accounts.google.com/**", (route) => route.abort())
 await quiet.goto(origin, { waitUntil: "domcontentloaded" })
-await quiet.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).waitFor({ timeout: 20_000 })
+await quiet.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).first().waitFor({ timeout: 20_000 })
 assert.equal(await quiet.locator("#gate").isHidden(), true)
 await again.close()
 await chromiumBrowser.close()
@@ -179,6 +238,77 @@ try {
 }
 
 assert.ok(ranges.some((range) => range.startsWith("bytes=")), `expected a range request, got ${ranges.join(",")}`)
+
+const loggedOut = await chromium.launch({ headless: true })
+const out = await loggedOut.newContext({ ...phone })
+await out.route("https://accounts.google.com/**", (route) => route.abort())
+const signedOut = await out.newPage()
+await signedOut.goto(origin, { waitUntil: "domcontentloaded" })
+await signedOut.locator("#signin").waitFor({ timeout: 1000 })
+assert.equal(await signedOut.locator("#player").isHidden(), true)
+assert.equal(await signedOut.locator("#signin").isVisible(), true)
+const stale = await loggedOut.newContext({ ...phone })
+await stale.route("https://accounts.google.com/**", (route) => route.abort())
+const expired = await stale.newPage()
+await expired.addInitScript(() => {
+  localStorage.setItem("bob-access", "old-token")
+  localStorage.setItem("bob-exp", "1")
+  localStorage.setItem("bob-hint", "ouvinte@example.com")
+})
+await expired.goto(origin, { waitUntil: "domcontentloaded" })
+await expired.locator("#signin").waitFor({ timeout: 4000 })
+assert.match(await expired.locator("#err").innerText(), /google|entrar|sozinho|não/i)
+if (process.env.SHOT) {
+  await signedOut.screenshot({ path: "/opt/cursor/artifacts/phone-onboarding-pixel.png", animations: "disabled" })
+  const iphone = {
+    viewport: { width: 393, height: 852 },
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+    userAgent: devices["iPhone 15"]?.userAgent || devices["iPhone 13"].userAgent,
+  }
+  const shot = { animations: "disabled", timeout: 15_000 }
+  const iphoneOut = await loggedOut.newContext(iphone)
+  await iphoneOut.route("https://accounts.google.com/**", (route) => route.abort())
+  const iphonePage = await iphoneOut.newPage()
+  await iphonePage.goto(origin, { waitUntil: "domcontentloaded" })
+  await iphonePage.waitForTimeout(1200)
+  await iphonePage.locator("#signin").waitFor({ timeout: 3000 })
+  await iphonePage.screenshot({ path: "/opt/cursor/artifacts/phone-onboarding-iphone.png", animations: "disabled", timeout: 15_000 })
+  const iphoneIn = await loggedOut.newContext(iphone)
+  await iphoneIn.route("https://accounts.google.com/**", (route) => route.abort())
+  const tour = await iphoneIn.newPage()
+  await tour.addInitScript(() => {
+    localStorage.setItem("bob-access", "test-token")
+    localStorage.setItem("bob-exp", String(Date.now() + 3_600_000))
+  })
+  await tour.goto(origin, { waitUntil: "domcontentloaded" })
+  await tour.waitForTimeout(1200)
+  await tour.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).first().waitFor({ timeout: 20_000 })
+  await tour.screenshot({ path: "/opt/cursor/artifacts/phone-home-iphone.png", ...shot })
+  await tour.getByRole("button", { name: "Biblioteca" }).click()
+  await tour.screenshot({ path: "/opt/cursor/artifacts/phone-library-iphone.png", ...shot })
+  await tour.getByRole("button", { name: "Curtidas" }).click()
+  await tour.screenshot({ path: "/opt/cursor/artifacts/phone-likes-iphone.png", ...shot })
+  await tour.getByRole("button", { name: "Descobrir", exact: true }).click()
+  await tour.screenshot({ path: "/opt/cursor/artifacts/phone-discover-iphone.png", ...shot })
+  await tour.getByRole("button", { name: "Biblioteca" }).click()
+  await tour.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).click()
+  await tour.waitForFunction(() => document.querySelector("#cover")?.naturalWidth > 0)
+  await tour.evaluate(() => document.querySelector("#audio")?.pause())
+  await tour.screenshot({ path: "/opt/cursor/artifacts/phone-now-iphone.png", ...shot })
+  await tour.getByRole("tab", { name: "Letra" }).click()
+  await tour.getByRole("button", { name: "keep coming", exact: true }).waitFor()
+  await tour.screenshot({ path: "/opt/cursor/artifacts/phone-lyrics-iphone.png", ...shot })
+  await tour.getByRole("tab", { name: "Fila" }).click()
+  await tour.screenshot({ path: "/opt/cursor/artifacts/phone-queue-iphone.png", ...shot })
+  await iphoneOut.close()
+  await iphoneIn.close()
+}
+await out.close()
+await stale.close()
+await loggedOut.close()
+
 site.close()
 api.close()
 console.log("phone played a ranged drive stream, cover, lyrics and video")
