@@ -7,14 +7,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use bob_core::{code_challenge_s256, folder_name, sibling_lrc_paths};
-use serde::{Deserialize, Serialize};
+use bob_core::{
+    code_challenge_s256, folder_name, google_auth_url, google_token_exchange_body, google_token_refresh_body,
+    oauth_callback_code, percent_encode, sibling_lrc_paths,
+};
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
+use serde::{Deserialize, Serialize};
 
-use crate::hidden::std_command;
 use crate::runtime::{emit, save, AppState};
-
-const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 
 struct Embedded;
 
@@ -219,12 +220,7 @@ fn refresh(token: &Token) -> Result<Token, String> {
     let response = http()
         .post("https://oauth2.googleapis.com/token")
         .header("content-type", "application/x-www-form-urlencoded")
-        .body(form_pairs(&[
-            ("client_id", id),
-            ("client_secret", client_secret()),
-            ("refresh_token", token.refresh_token.as_str()),
-            ("grant_type", "refresh_token"),
-        ]))
+        .body(google_token_refresh_body(id, client_secret(), token.refresh_token.as_str()))
         .send()
         .map_err(|error| error.to_string())?;
     let body = response.text().map_err(|error| error.to_string())?;
@@ -551,24 +547,8 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
-fn form_pairs(pairs: &[(&str, &str)]) -> String {
-    pairs
-        .iter()
-        .map(|(key, value)| format!("{}={}", urlencoding(key), urlencoding(value)))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
 fn urlencoding(value: &str) -> String {
-    let mut out = String::new();
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
+    percent_encode(value)
 }
 
 fn base64url(bytes: &[u8]) -> String {
@@ -615,74 +595,49 @@ pub async fn drive_connect(app: tauri::AppHandle) -> Result<DriveStatus, String>
         base64url(&bytes)
     };
     let challenge = code_challenge_s256(&verifier);
+    let state = {
+        let mut bytes = [0u8; 16];
+        let _ = getrandom::getrandom(&mut bytes);
+        base64url(&bytes)
+    };
     let server = tiny_http::Server::http("127.0.0.1:0").map_err(|_| "não abri a porta local".to_string())?;
     let port = match server.server_addr() {
         tiny_http::ListenAddr::IP(addr) => addr.port(),
         _ => return Err("porta local inválida".into()),
     };
     let redirect = format!("http://127.0.0.1:{port}");
-    let url = format!(
-        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&access_type=offline&prompt=consent",
-        urlencoding(id),
-        urlencoding(&redirect),
-        urlencoding(SCOPE),
-        urlencoding(&challenge)
-    );
-    open_browser(&url);
-    let code = tokio::task::spawn_blocking(move || wait_code(server))
+    let url = google_auth_url(id, &redirect, &challenge, &state);
+    // cmd /c start splits on '&', so Google only saw client_id and reported a missing response_type.
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|_| "não consegui abrir o navegador para o login do google.".to_string())?;
+    let code = tokio::task::spawn_blocking(move || wait_code(server, state))
         .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "o login no google expirou.".to_string())?;
+        .map_err(|error| error.to_string())??;
     let token = exchange(id, &verifier, &code, &redirect)?;
     store_token(&token);
     drive_status(app).await.pipe(Ok)
 }
 
-fn wait_code(server: tiny_http::Server) -> Option<String> {
-    let request = server.recv_timeout(Duration::from_secs(180)).ok()??;
+fn wait_code(server: tiny_http::Server, state: String) -> Result<String, String> {
+    let Some(request) = server.recv_timeout(Duration::from_secs(180)).ok().flatten() else {
+        return Err("o login no google expirou.".into());
+    };
     let url = request.url().to_string();
-    let code = url.split("code=").nth(1).and_then(|rest| rest.split('&').next()).map(|value| {
-        urlencoding_decode(value)
-    });
+    let code = oauth_callback_code(&url, &state).map_err(|error| error.to_string());
     let page = tiny_http::Response::from_string(
         "<html><body style='font-family:sans-serif'><p>pode fechar esta janela e voltar ao bob baixa.</p></body></html>",
     )
     .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap());
     let _ = request.respond(page);
-    code.filter(|value| !value.is_empty())
-}
-
-fn urlencoding_decode(value: &str) -> String {
-    let bytes = value.replace('+', " ");
-    let mut out = Vec::new();
-    let raw = bytes.as_bytes();
-    let mut index = 0;
-    while index < raw.len() {
-        if raw[index] == b'%' && index + 2 < raw.len() {
-            if let Ok(byte) = u8::from_str_radix(std::str::from_utf8(&raw[index + 1..index + 3]).unwrap_or(""), 16) {
-                out.push(byte);
-                index += 3;
-                continue;
-            }
-        }
-        out.push(raw[index]);
-        index += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    code
 }
 
 fn exchange(id: &str, verifier: &str, code: &str, redirect: &str) -> Result<Token, String> {
     let response = http()
         .post("https://oauth2.googleapis.com/token")
         .header("content-type", "application/x-www-form-urlencoded")
-        .body(form_pairs(&[
-            ("client_id", id),
-            ("client_secret", client_secret()),
-            ("code", code),
-            ("code_verifier", verifier),
-            ("redirect_uri", redirect),
-            ("grant_type", "authorization_code"),
-        ]))
+        .body(google_token_exchange_body(id, client_secret(), code, verifier, redirect))
         .send()
         .map_err(|error| error.to_string())?;
     let body = response.text().map_err(|error| error.to_string())?;
@@ -698,15 +653,6 @@ fn exchange(id: &str, verifier: &str, code: &str, redirect: &str) -> Result<Toke
         access_token: access.to_string(),
         expires_at: now_secs() + expires - 30,
     })
-}
-
-fn open_browser(url: &str) {
-    #[cfg(windows)]
-    let _ = std_command("cmd").args(["/C", "start", "", url]).spawn();
-    #[cfg(target_os = "macos")]
-    let _ = std_command("open").arg(url).spawn();
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let _ = std_command("xdg-open").arg(url).spawn();
 }
 
 #[tauri::command]
