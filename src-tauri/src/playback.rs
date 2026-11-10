@@ -473,7 +473,7 @@ pub async fn scan_library(app: tauri::AppHandle, path: Option<String>) -> Result
 pub async fn delete_library_track(app: tauri::AppHandle, path: String) -> Result<(), String> {
     if let Some(id) = path.strip_prefix("drive:") {
         let id = id.to_string();
-        return tokio::task::spawn_blocking(move || crate::drive::set_trashed(&id, true))
+        return tokio::task::spawn_blocking(move || crate::drive::erase_permanently(&id))
             .await
             .map_err(|error| error.to_string())?;
     }

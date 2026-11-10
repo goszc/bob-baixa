@@ -641,6 +641,10 @@ export async function clearSchedule() {
   if (!isTauri()) pumpMock()
 }
 
+export function setSearchQuery(searchQuery: string) {
+  setState({ searchQuery })
+}
+
 export async function runSearch() {
   const query = getState().searchQuery.trim()
   if (!query) return
@@ -912,7 +916,7 @@ export function openNotes() {
 
 export async function dismissNotes() {
   const ack = getState().whatsNew
-  const version = getState().tools.appVersion || "0.6.6"
+  const version = getState().tools.appVersion || "0.6.7"
   setState((current) => ({
     ...current,
     showNotes: false,

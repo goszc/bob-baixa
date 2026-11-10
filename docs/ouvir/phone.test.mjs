@@ -140,6 +140,13 @@ async function exercise(browser, label) {
   await page.getByRole("button", { name: "Disappeared Completely — Once In a While" }).waitFor()
   assert.equal(await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).count(), 1)
   if (process.env.SHOT && label === "chromium") await page.screenshot({ path: "/opt/cursor/artifacts/phone-library-pixel.png" })
+  if (process.env.SHOT && label === "chromium") {
+    await page.getByRole("button", { name: "Curtidas" }).click()
+    await page.screenshot({ path: "/opt/cursor/artifacts/phone-likes-pixel.png" })
+    await page.getByRole("button", { name: "Descobrir", exact: true }).click()
+    await page.screenshot({ path: "/opt/cursor/artifacts/phone-discover-pixel.png" })
+    await page.getByRole("button", { name: "Biblioteca" }).click()
+  }
   await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).click()
   await page.waitForFunction(() => {
     const audio = document.querySelector("#audio")
@@ -169,6 +176,7 @@ async function exercise(browser, label) {
       const video = document.querySelector("#video")
       return video && !video.hidden && video.videoWidth > 0
     })
+    if (process.env.SHOT && label === "chromium") await page.screenshot({ path: "/opt/cursor/artifacts/phone-video-pixel.png" })
   }
   await page.getByRole("button", { name: "fechar", exact: true }).click()
   if (!canVideo) {
@@ -263,6 +271,11 @@ if (process.env.SHOT) {
   await tour.screenshot({ path: "/opt/cursor/artifacts/phone-home-iphone.png", ...shot })
   await tour.getByRole("button", { name: "Biblioteca" }).click()
   await tour.screenshot({ path: "/opt/cursor/artifacts/phone-library-iphone.png", ...shot })
+  await tour.getByRole("button", { name: "Curtidas" }).click()
+  await tour.screenshot({ path: "/opt/cursor/artifacts/phone-likes-iphone.png", ...shot })
+  await tour.getByRole("button", { name: "Descobrir", exact: true }).click()
+  await tour.screenshot({ path: "/opt/cursor/artifacts/phone-discover-iphone.png", ...shot })
+  await tour.getByRole("button", { name: "Biblioteca" }).click()
   await tour.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).click()
   await tour.waitForFunction(() => document.querySelector("#cover")?.naturalWidth > 0)
   await tour.evaluate(() => document.querySelector("#audio")?.pause())

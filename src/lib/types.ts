@@ -3,6 +3,9 @@ export type ThemeMode = "system" | "light" | "dark" | "glass-light" | "glass-dar
 export type Page =
   | "home"
   | "player"
+  | "likes"
+  | "discover"
+  | "playlists"
   | "queue"
   | "search"
   | "convert"

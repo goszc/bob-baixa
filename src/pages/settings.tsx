@@ -9,7 +9,7 @@ import type { Key } from "../lib/i18n"
 import { cn } from "../lib/cn"
 import { invoke, isTauri } from "../lib/api"
 import type { CookiesBrowser, Lang, ThemeMode } from "../lib/types"
-import { checkUpdates, makeDiagnostic, measureLibrary, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
+import { checkUpdates, go, makeDiagnostic, measureLibrary, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
 
 const CATS: { id: string; key: Key }[] = [
   { id: "sponsor", key: "cat_sponsor" },
@@ -31,6 +31,13 @@ export function Settings() {
   return (
     <div>
       <PageHeader title={t("settings_title")} sub={t("settings_sub")} />
+      <div className="mb-6 flex flex-wrap gap-2">
+        {(["queue", "convert", "monitor", "history"] as const).map((id) => (
+          <button key={id} type="button" className="h-8 rounded-full bg-soft px-3 text-[13px] text-muted hover:text-ink" onClick={() => go(id)}>
+            {t(id === "queue" ? "nav_queue" : id === "convert" ? "nav_convert" : id === "monitor" ? "nav_monitor" : "nav_history")}
+          </button>
+        ))}
+      </div>
       <Section title={t("appearance")} first>
         <div className="border-b border-line py-4">
           <div className="flex items-start justify-between gap-6">
@@ -157,7 +164,7 @@ export function Settings() {
       <Section title={t("tools")}>
         <p className="py-3 text-[13px] leading-relaxed text-muted">{t("tools_hint")}</p>
         <p className="pb-3 text-[13px] text-muted">
-          bob baixa · {app.tools.appVersion ?? "0.6.6"}
+          bob baixa · {app.tools.appVersion ?? "0.6.7"}
           <br />
           yt-dlp {app.tools.ytdlpVersion ? `· ${app.tools.ytdlpVersion}` : `· ${t("tools_missing")}`}
           <br />

@@ -1,5 +1,14 @@
 # changelog
 
+## 0.6.7
+
+- descobrir música baixa uma faixa no formato padrão. descobrir mix cria uma playlist com 10 vídeos em 480p, a partir do que toca e do que mais toca
+- a tradução da letra continua quando se troca de tela e volta guardada na faixa
+- curtidas fica na barra, logo abaixo de início, com a quantidade
+- apagar uma faixa apaga o arquivo no Google Drive de vez e tira do índice do celular, depois de confirmar
+- a barra lateral fica em início, buscar, biblioteca, curtidas, descobrir e playlists. a cor da capa pinta o fundo e o play. a busca global, o colar de um link, o anel de download e o chip da ia ficam discretos
+- o menu do botão direito abre no cursor, com seis itens. as listas mostram o play ao passar o mouse. o vídeo preenche a área. a letra tem traduzir, sincronizar e um menu
+
 ## 0.6.6
 
 - o celular deixa de abrir numa tela vazia. sem sessão, o ícone, uma frase e o botão entrar aparecem na hora. com sessão vencida, a entrada silenciosa espera no máximo 3 segundos e volta ao botão, com o erro

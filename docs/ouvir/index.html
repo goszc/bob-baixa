@@ -80,7 +80,9 @@
       }
       #player { display: none; }
       html.has-session #player { display: block; }
-      .views { display: flex; gap: 18px; margin: 8px 0 16px; }
+      .views { display: flex; gap: 18px; margin: 8px 0 16px; flex-wrap: wrap; }
+      .pair { display: flex; gap: 8px; }
+      .pair button { flex: 1; min-height: 44px; border: 0; border-radius: 999px; background: var(--soft); color: var(--ink); }
       .views button, .segments button, .tabs button { background: none; border: 0; color: var(--muted); min-height: 44px; padding: 0; }
       .views button[aria-current="page"], .segments button[aria-selected="true"], .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 620; }
       .segments {
@@ -232,7 +234,7 @@
     <main>
       <header>
         <h1>bob baixa</h1>
-        <button id="version" type="button">0.6.6</button>
+        <button id="version" type="button">0.6.7</button>
       </header>
       <p class="err" id="err" role="status"></p>
       <section id="gate">
@@ -246,10 +248,21 @@
       <section id="player">
         <nav class="views" aria-label="seções">
           <button type="button" data-view="home" aria-current="page">Início</button>
+          <button type="button" data-view="likes">Curtidas</button>
           <button type="button" data-view="library">Biblioteca</button>
+          <button type="button" data-view="discover">Descobrir</button>
         </nav>
         <div id="pull" aria-hidden="true"></div>
         <section id="home" aria-label="início"></section>
+        <section id="likes" hidden aria-label="curtidas"></section>
+        <section id="discover" hidden aria-label="descobrir">
+          <p class="lead">a partir do que está tocando e do que você mais ouve.</p>
+          <div class="pair">
+            <button type="button" id="discover-one">Descobrir música</button>
+            <button type="button" id="discover-mix">Descobrir mix</button>
+          </div>
+          <p id="discover-note" class="lead"></p>
+        </section>
         <section id="library" hidden aria-label="biblioteca">
           <div class="segments" role="tablist" aria-label="biblioteca">
             <button type="button" data-seg="tracks" role="tab" aria-selected="true">Faixas</button>

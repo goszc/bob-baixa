@@ -1954,6 +1954,18 @@ pub fn repair_some() -> Result<(u32, u32, u32), String> {
     drive_play::repair_some()
 }
 
+pub fn erase_permanently(id: &str) -> Result<(), String> {
+    purge(id)?;
+    let extra = drive_play::take_record(id);
+    for other in extra {
+        if other != id {
+            let _ = purge(&other);
+        }
+    }
+    schedule_phone_publish();
+    Ok(())
+}
+
 pub fn set_trashed(id: &str, trashed: bool) -> Result<(), String> {
     let token = bearer(false)?.token;
     let response = http()

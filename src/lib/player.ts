@@ -872,6 +872,8 @@ function prefetchAhead() {
   void invoke("warm_next", { paths })
 }
 
+let radioFetch = ""
+
 function extendRadio() {
   if (!player.radio || !shelf.length) return
   const pos = player.order.indexOf(player.index)
@@ -880,7 +882,28 @@ function extendRadio() {
   if (!seed) return
   const have = new Set(player.queue.map((track) => trackKey(track.path)))
   const more = relatedTracks(seed, shelf).filter((track) => !have.has(trackKey(track.path))).slice(0, 8)
-  if (more.length) queueTracks(more, "end")
+  if (more.length) {
+    queueTracks(more, "end")
+    return
+  }
+  const query = `${seed.artist} ${seed.title}`.trim()
+  if (!query || radioFetch === query) return
+  radioFetch = query
+  void import("../store").then(({ enqueueItems, getState }) => {
+    const config = getState().config
+    const audio = config.audioOnly
+    return enqueueItems([
+      {
+        url: `ytsearch1:${query} similar`,
+        title: query,
+        audioOnly: audio,
+        container: audio ? undefined : "mp4",
+        audioFormat: audio ? config.audioFormat : undefined,
+        tagArtist: seed.artist,
+        tagAlbum: seed.album,
+      },
+    ])
+  })
 }
 
 export function playTracks(queue: Track[], index: number, radio = false) {

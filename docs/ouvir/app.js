@@ -150,6 +150,16 @@ function wire() {
     pulse()
     toggle()
   })
+  document.querySelector("#discover-one")?.addEventListener("click", () => {
+    const note = document.querySelector("#discover-note")
+    if (note) note.textContent = "baixando 1 faixa no formato padrão."
+    if (tracks.length) play(0)
+  })
+  document.querySelector("#discover-mix")?.addEventListener("click", () => {
+    const note = document.querySelector("#discover-note")
+    if (note) note.textContent = "mix de 10 vídeos em 480p."
+    if (tracks.length) play(0)
+  })
   document.querySelector("#close")?.addEventListener("click", () => closeSheet())
   document.querySelector("#grab")?.addEventListener("pointerdown", startDrag)
   document.querySelector("#stage")?.addEventListener("pointerdown", startDrag)
@@ -162,8 +172,11 @@ function wire() {
       button.setAttribute("aria-current", "page")
       document.querySelector("#home").hidden = view !== "home"
       document.querySelector("#library").hidden = view !== "library"
+      document.querySelector("#likes").hidden = view !== "likes"
+      document.querySelector("#discover").hidden = view !== "discover"
       if (view === "home") renderHome()
-      else renderLibrary()
+      else if (view === "likes") renderLikes()
+      else if (view === "library") renderLibrary()
     })
   }
   for (const button of document.querySelectorAll("[data-seg]")) {
@@ -508,7 +521,35 @@ function showHome() {
   renderHome()
 }
 
+function renderLikes() {
+  const box = document.querySelector("#likes")
+  box.innerHTML = ""
+  const loved = tracks.filter((track) => liked.has(track.id))
+  if (!loved.length) {
+    const empty = document.createElement("p")
+    empty.className = "lead"
+    empty.textContent = "nenhuma curtida ainda."
+    const action = document.createElement("button")
+    action.type = "button"
+    action.className = "go"
+    action.textContent = "Descobrir música"
+    action.addEventListener("click", () => document.querySelector('[data-view="discover"]')?.dispatchEvent(new Event("click")))
+    box.append(empty, action)
+    return
+  }
+  for (const track of loved) {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = "row"
+    button.textContent = `${track.artist} — ${track.title}`
+    button.addEventListener("click", () => play(tracks.indexOf(track)))
+    box.append(button)
+  }
+}
+
 function renderHome() {
+  const likesButton = document.querySelector('[data-view="likes"]')
+  if (likesButton) likesButton.textContent = `Curtidas ${liked.size}`
   const home = document.querySelector("#home")
   home.innerHTML = ""
   if (!tracks.length) {
