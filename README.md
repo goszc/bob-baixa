@@ -108,25 +108,29 @@ um link público do spotify ou do youtube abre uma lista para marcar o que baixa
 
 a chave do gemini é colada em configurações e guardada como o token do drive. o modelo padrão é `gemini-3.5-flash-lite`, com `gemini-3.1-flash-lite` de reserva, `gemma-4-31b-it` para lote, `gemini-embedding-2` para buscar por descrição e `gemini-3.5-transcribe` para a letra. sem a chave, as sugestões usam artista, álbum e o que você ouviu.
 
-o discord pede o id do aplicativo nas configurações e o discord aberto no windows. gerar diagnóstico cria um zip na área de trabalho, sem a chave e sem o token do drive.
+o discord mostra ouvindo a faixa no bob baixa quando está ligado e o discord está aberto no windows. o id do aplicativo entra na compilação pelo segredo `BOB_DISCORD_APP_ID`. quem quiser outro cola nas configurações; o campo vazio deixa o id da compilação. gerar diagnóstico cria um zip na área de trabalho, sem a chave e sem o token do drive.
 
 ### ouvir no celular
 
-a pasta `docs/ouvir` é um site estático. no github pages, a origem precisa ser **main** e a pasta **/docs**. o endereço fica:
+a página fica em `https://goszc.github.io/bob-baixa/ouvir/`. o workflow `.github/workflows/pages.yml` publica `docs/ouvir` a cada push na `main`. o client id web não fica no git: o workflow escreve o segredo `BOB_GOOGLE_WEB_CLIENT_ID` no `config.js` da página publicada.
 
-`https://goszc.github.io/bob-baixa/ouvir/`
+o cliente oauth do programa é do tipo **desktop app** e não serve no navegador. crie outro cliente, do tipo **aplicativo da web**, no **mesmo projeto** do Google Cloud. em origens javascript autorizadas, cadastre:
 
-no cliente oauth usado por `BOB_GOOGLE_CLIENT_ID` (o mesmo id do app, escopo `drive.file`), acrescente este redirect uri:
-
-`https://goszc.github.io/bob-baixa/ouvir/`
+`https://goszc.github.io`
 
 e, para testar nesta máquina:
 
-`http://127.0.0.1:4173/ouvir/`
+`http://127.0.0.1:4173`
 
-o site não leva o segredo do cliente. se o cliente atual for do tipo computador e o google não deixar cadastrar redirect de site, troque o tipo para aplicativo da web, mantenha o redirect de loopback que o app desktop já usa e o mesmo client id. um client id diferente não enxerga os arquivos que o app criou. a chave do gemini não entra no site: cada pessoa cola a própria no app de computador.
+não cadastre redirect de site nesse cliente. a página pede o token pelo Google Identity Services, só com o escopo `drive.file`. esse escopo lê e grava o que o projeto criou, não o drive inteiro. um cliente web de outro projeto não vê as faixas que o programa enviou.
 
-em `docs/ouvir/config.js`, troque o client id de exemplo pelo mesmo `BOB_GOOGLE_CLIENT_ID` antes de publicar.
+para ouvir localmente:
+
+```bash
+python3 -m http.server 4173 --directory docs
+```
+
+e abra `http://127.0.0.1:4173/ouvir/`. a chave do gemini não entra no site.
 
 ## compilar
 

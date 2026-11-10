@@ -19,7 +19,7 @@ static PRESENCE: Mutex<Presence> = Mutex::new(Presence {
 pub fn update(client_id: &str, title: &str, artist: &str, playing: bool) -> Result<(), String> {
     let client_id = client_id.trim();
     if client_id.is_empty() {
-        return Err("cole o id do aplicativo do discord nas configurações.".into());
+        return Err("o discord ainda não tem um id. ele vem com o programa, ou você cola outro nas configurações.".into());
     }
     #[cfg(not(windows))]
     {
