@@ -138,6 +138,7 @@ pub fn boot(app: AppHandle) {
         tauri::async_runtime::spawn(async move { clipboard_loop(app_clip).await });
         start_http(app.clone());
         crate::drive::boot(app.clone());
+        crate::hub::startup(app.clone());
         register_hotkey(&app);
         setup_tray(&app);
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -261,7 +262,11 @@ pub async fn analyze(app: &AppHandle, urls: Vec<String>) -> Result<Vec<MediaItem
         let limit = limit.clone();
         tasks.push(async move {
             let _permit = limit.acquire().await.map_err(|error| error.to_string())?;
-            let item = analyze_one(&bin, url).await?;
+            let item = if let Some(link) = bob_core::parse_spotify(&url) {
+                crate::spotify::resolve(&bin, &link).await?
+            } else {
+                analyze_one(&bin, url).await?
+            };
             Ok::<_, String>((index, item))
         });
     }
@@ -338,13 +343,27 @@ pub async fn enqueue(app: &AppHandle, items: Vec<EnqueueItem>) -> Result<(), Str
         }
         let hold = inner.schedule_at.clone();
         let config = inner.config.clone();
+        let mut tagged = Vec::new();
         for item in items {
-            if !(item.url.starts_with("http://") || item.url.starts_with("https://")) {
+            if !(item.url.starts_with("http://") || item.url.starts_with("https://") || item.url.starts_with("ytsearch")) {
                 continue;
+            }
+            if item.tag_artist.is_some() || item.tag_album.is_some() || item.tag_cover.is_some() || item.tag_track.unwrap_or(0) > 0 {
+                tagged.push(crate::loudness::PendingTag {
+                    url: item.url.clone(),
+                    title: item.title.clone().unwrap_or_default(),
+                    artist: item.tag_artist.clone().unwrap_or_default(),
+                    album: item.tag_album.clone().unwrap_or_default(),
+                    track: item.tag_track.unwrap_or(0),
+                    cover: item.tag_cover.clone().unwrap_or_default(),
+                });
             }
             inner
                 .jobs
                 .insert(0, Job::from_item(item, &config, hold.as_deref()));
+        }
+        if !tagged.is_empty() {
+            crate::loudness::remember_tags(&inner.data_dir, &tagged);
         }
         jobs_len = inner.jobs.len();
         save(&inner);
@@ -1457,6 +1476,14 @@ async fn finish(
     }
     inner.logs.remove(id);
     inner.last_job_emit.remove(id);
+    let ready = if state == "done" && inner.config.queue_new_downloads {
+        path.clone().map(|ready_path| {
+            let title = inner.jobs.iter().find(|job| job.id == id).map(|job| job.title.clone()).unwrap_or_default();
+            (ready_path, title)
+        })
+    } else {
+        None
+    };
     save(&inner);
     let jobs = inner.jobs.clone();
     let history = inner.history.clone();
@@ -1464,6 +1491,9 @@ async fn finish(
     emit(app, &BobEvent::Jobs { jobs });
     if state == "done" || state == "failed" {
         emit(app, &BobEvent::History { history });
+    }
+    if let Some((ready_path, title)) = ready {
+        emit(app, &BobEvent::Ready { path: ready_path, title, artist: String::new() });
     }
     if let Some(body) = notify_body {
         notify(app, &body);
@@ -1592,6 +1622,10 @@ async fn check_watch_body(app: &AppHandle, id: String) {
             title: media.title.clone(),
             duration: media.duration,
             thumbnail: media.thumbnail.clone(),
+            artist: String::new(),
+            album: String::new(),
+            track: 0,
+            cover: String::new(),
         }]
     } else {
         media.entries.clone()
@@ -2119,7 +2153,7 @@ pub(crate) async fn ytdlp_path(app: &AppHandle) -> Result<PathBuf, String> {
     })
 }
 
-async fn capture(bin: &Path, args: &[String]) -> Result<String, String> {
+pub(crate) async fn capture(bin: &Path, args: &[String]) -> Result<String, String> {
     let mut cmd = tokio_command(bin);
     cmd.args(args)
         .stdout(std::process::Stdio::piped())

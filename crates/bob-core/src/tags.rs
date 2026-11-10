@@ -8,6 +8,17 @@ pub fn write_track_tags(
     album: &str,
     cover_jpeg: Option<&[u8]>,
 ) -> Result<(), String> {
+    write_release_tags(path, title, artist, album, 0, cover_jpeg)
+}
+
+pub fn write_release_tags(
+    path: &Path,
+    title: &str,
+    artist: &str,
+    album: &str,
+    track: u32,
+    cover_jpeg: Option<&[u8]>,
+) -> Result<(), String> {
     use lofty::config::WriteOptions;
     use lofty::picture::{MimeType, Picture, PictureType};
     use lofty::prelude::*;
@@ -32,6 +43,9 @@ pub fn write_track_tags(
     }
     if !album.trim().is_empty() {
         tag.set_album(album.trim().to_string());
+    }
+    if track > 0 {
+        tag.set_track(track);
     }
     if let Some(bytes) = cover_jpeg.filter(|bytes| bytes.len() > 32) {
         let mime = if bytes.starts_with(b"\x89PNG") {

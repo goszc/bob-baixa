@@ -1,0 +1,11 @@
+{
+  "name": "bob baixa",
+  "short_name": "bob baixa",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#161616",
+  "theme_color": "#161616",
+  "icons": [
+    { "src": "../screenshots/home-escuro.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

@@ -9,7 +9,7 @@ import type { Key } from "../lib/i18n"
 import { cn } from "../lib/cn"
 import { invoke, isTauri } from "../lib/api"
 import type { CookiesBrowser, Lang, ThemeMode } from "../lib/types"
-import { checkUpdates, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
+import { checkUpdates, makeDiagnostic, measureLibrary, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
 
 const CATS: { id: string; key: Key }[] = [
   { id: "sponsor", key: "cat_sponsor" },
@@ -157,7 +157,7 @@ export function Settings() {
       <Section title={t("tools")}>
         <p className="py-3 text-[13px] leading-relaxed text-muted">{t("tools_hint")}</p>
         <p className="pb-3 text-[13px] text-muted">
-          bob baixa · {app.tools.appVersion ?? "0.2.0"}
+          bob baixa · {app.tools.appVersion ?? "0.6.0"}
           <br />
           yt-dlp {app.tools.ytdlpVersion ? `· ${app.tools.ytdlpVersion}` : `· ${t("tools_missing")}`}
           <br />
@@ -180,11 +180,31 @@ export function Settings() {
           <Button variant="ghost" disabled={app.busy === "tools"} onClick={() => void reinstallTools()}>
             {t("reinstall_tools")}
           </Button>
+          <Button variant="outline" disabled={app.busy === "tools"} onClick={() => void makeDiagnostic()}>
+            {t("settings_diagnostic")}
+          </Button>
+        </div>
+        <p className="pb-3 text-[13px] leading-relaxed text-muted">{t("settings_diagnostic_hint")}</p>
+        <div className="pb-4">
+          <Button variant="ghost" disabled={app.busy === "tools"} onClick={() => void measureLibrary()}>
+            {t("settings_gain")}
+          </Button>
+          <p className="mt-2 text-[13px] leading-relaxed text-muted">{t("player_normalize_lufs")}</p>
         </div>
         {app.tools.message ? <p className="pb-3 text-[13px] text-danger">{app.tools.message}</p> : null}
       </Section>
       <LibrarySection />
       <DriveSection />
+      <Section title={t("settings_gemini")}>
+        <DriveExtras />
+      </Section>
+      <Section title={t("settings_discord")}>
+        <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_discord_hint")}</p>
+        <Row label={t("settings_discord")}>
+          <Switch label={t("settings_discord")} checked={config.discord} onCheckedChange={(value) => setConfig({ discord: value })} />
+        </Row>
+        <Input className="mt-3" value={config.discordClientId} placeholder={t("settings_discord_id")} onChange={(event) => setConfig({ discordClientId: event.target.value })} />
+      </Section>
       <Section title={t("about")}>
         <p className="py-3 text-[14px]">bob baixa · {t("version")}</p>
         <div className="pb-4">
@@ -410,6 +430,131 @@ function DriveSection() {
       </Row>
       {note ? <p className="py-2 text-[13px] text-muted">{note}</p> : null}
     </Section>
+  )
+}
+
+function DriveExtras() {
+  const t = useT()
+  const app = useApp()
+  const [key, setKey] = useState("")
+  const [gemini, setGemini] = useState(false)
+  const [trash, setTrash] = useState<{ id: string; name: string }[]>([])
+  const [openTrash, setOpenTrash] = useState(false)
+  useEffect(() => {
+    if (!isTauri()) return
+    void invoke<boolean>("gemini_status").then(setGemini).catch(() => setGemini(false))
+  }, [])
+  return (
+    <div className="space-y-3 border-t border-line py-3">
+      <Row label={t("settings_queue_new")} hint={t("settings_queue_new_hint")}>
+        <Switch label={t("settings_queue_new")} checked={app.config.queueNewDownloads} onCheckedChange={(value) => setConfig({ queueNewDownloads: value })} />
+      </Row>
+      <Row label={t("settings_queue_where")}>
+        <Select value={app.config.queueNewWhere} onChange={(event) => setConfig({ queueNewWhere: event.target.value === "next" ? "next" : "end" })}>
+          <option value="end">{t("settings_queue_end")}</option>
+          <option value="next">{t("settings_queue_next")}</option>
+        </Select>
+      </Row>
+      <Row label={t("settings_discover_ratio")}>
+        <input
+          type="range"
+          min={0}
+          max={80}
+          value={Math.round(app.config.discoverRatio * 100)}
+          onChange={(event) => setConfig({ discoverRatio: Number(event.target.value) / 100 })}
+        />
+      </Row>
+      <div>
+        <div className="text-[14px]">{t("settings_gemini")}</div>
+        <p className="mt-1 text-[12px] text-muted">{t("settings_gemini_hint")}</p>
+        <p className="mt-1 text-[12px] text-muted">{gemini ? t("settings_gemini_on") : t("settings_gemini_off")}</p>
+        <div className="mt-2 flex gap-2">
+          <Input type="password" value={key} onChange={(event) => setKey(event.target.value)} autoComplete="off" />
+          <Button
+            type="button"
+            onClick={() => {
+              void invoke("gemini_save_key", { key }).then(() => {
+                setGemini(Boolean(key.trim()))
+                setKey("")
+              })
+            }}
+          >
+            {t("settings_gemini_save")}
+          </Button>
+          <Button type="button" variant="ghost" onClick={() => void invoke("gemini_save_key", { key: "" }).then(() => setGemini(false))}>
+            {t("settings_gemini_clear")}
+          </Button>
+        </div>
+        <div className="mt-3 grid gap-3">
+          <Input value={app.config.geminiFlash} onChange={(event) => setConfig({ geminiFlash: event.target.value })} />
+          <Input value={app.config.geminiFlashFallback} onChange={(event) => setConfig({ geminiFlashFallback: event.target.value })} />
+          <Input value={app.config.geminiBulk} onChange={(event) => setConfig({ geminiBulk: event.target.value })} />
+          <Input value={app.config.geminiEmbed} onChange={(event) => setConfig({ geminiEmbed: event.target.value })} />
+          <Input value={app.config.geminiTranscribe} onChange={(event) => setConfig({ geminiTranscribe: event.target.value })} />
+        </div>
+        <div className="py-3">
+          <Row label={t("settings_gemini_auto")}>
+            <Switch label={t("settings_gemini_auto")} checked={app.config.geminiAutoLyrics} onCheckedChange={(value) => setConfig({ geminiAutoLyrics: value })} />
+          </Row>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            void invoke<{ usage: number; limit: number; offline: number; cloud: number; cacheBytes: number }>("drive_space").then((space) => {
+              window.alert(
+                t("settings_space_line")
+                  .replace("{used}", formatBytes(space.usage))
+                  .replace("{offline}", String(space.offline))
+                  .replace("{cloud}", String(space.cloud))
+                  .replace("{cache}", formatBytes(space.cacheBytes)),
+              )
+            })
+          }}
+        >
+          {t("settings_space")}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            void invoke<number>("free_cache").then((freed) => window.alert(t("settings_freed").replace("{n}", formatBytes(freed))))
+          }}
+        >
+          {t("settings_free_cache")}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            setOpenTrash(true)
+            void invoke<{ id: string; name: string }[]>("list_trash").then(setTrash).catch(() => setTrash([]))
+          }}
+        >
+          {t("settings_trash")}
+        </Button>
+      </div>
+      {openTrash ? (
+        <ul>
+          {trash.length === 0 ? <li className="text-[13px] text-muted">{t("settings_trash_empty")}</li> : null}
+          {trash.map((item) => (
+            <li key={item.id} className="flex items-center justify-between gap-3 border-b border-line py-2 text-[13px]">
+              <span className="truncate">{item.name}</span>
+              <span className="flex gap-3">
+                <button type="button" className="text-muted hover:text-ink" onClick={() => void invoke("restore_trash", { id: item.id }).then(() => setTrash((rows) => rows.filter((row) => row.id !== item.id)))}>
+                  {t("settings_restore")}
+                </button>
+                <button type="button" className="text-muted hover:text-ink" onClick={() => void invoke("purge_trash", { id: item.id }).then(() => setTrash((rows) => rows.filter((row) => row.id !== item.id)))}>
+                  {t("settings_purge")}
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   )
 }
 

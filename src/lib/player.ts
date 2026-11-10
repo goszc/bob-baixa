@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react"
 import { invoke, isTauri } from "./api"
-import { trackKey, type Track } from "./library"
+import { nextPaths } from "./discover"
+import { relatedTracks, trackKey, type Track } from "./library"
 import { EQ_BANDS, eqIsFlat } from "./eq"
 import { activeEq, clearSleep, flushHear, getMusic, hear, onAudioPref, rememberPosition, rememberSession, resumeFor, toggleLike, touchRecent } from "./music"
 
@@ -31,6 +32,7 @@ export interface MediaInspect {
   duration?: number | null
   src: string
   cover?: string
+  gain?: number
 }
 
 export interface PlayerMeta {
@@ -57,6 +59,7 @@ export interface PlayerState {
   error: "missing" | "failed" | null
   meta: PlayerMeta | null
   playbackKind: PlaybackKind | null
+  radio: boolean
 }
 
 const sampleLyrics: TrackLyrics = {
@@ -115,6 +118,7 @@ function initial(): PlayerState {
     error: null,
     meta: null,
     playbackKind: null,
+    radio: false,
   }
 }
 
@@ -132,6 +136,10 @@ let slotB = false
 let wired = false
 let audioCtx: AudioContext | null = null
 let gainA: GainNode | null = null
+let trimA: GainNode | null = null
+let trimB: GainNode | null = null
+let sleepFading = false
+let miniAt = 0
 let gainB: GainNode | null = null
 let master: GainNode | null = null
 let compressor: DynamicsCompressorNode | null = null
@@ -151,6 +159,7 @@ function emit() {
 function setPlayer(patch: Partial<PlayerState>) {
   player = { ...player, ...patch }
   emit()
+  publishMini()
   publishSession()
   const track = currentTrack()
   if (track) {
@@ -235,6 +244,33 @@ function idleAudio() {
   return slotB ? audio : audioAlt
 }
 
+function setTrim(element: HTMLMediaElement, db: number) {
+  const trim = element === audioAlt ? trimB : trimA
+  if (!trim || !audioCtx) return
+  const linear = 10 ** (Math.max(-24, Math.min(12, db)) / 20)
+  trim.gain.setValueAtTime(linear, audioCtx.currentTime)
+}
+
+function publishMini() {
+  if (!isTauri()) return
+  const now = Date.now()
+  if (now - miniAt < 400) return
+  miniAt = now
+  const track = currentTrack()
+  const line = player.lyrics?.lines.filter((item) => item.at <= player.currentTime + 0.2).at(-1)?.text ?? ""
+  void import("@tauri-apps/api/event").then(({ emit }) =>
+    emit("mini-state", {
+      title: displayTitle() || track?.title || "",
+      artist: displayArtist() || track?.artist || "",
+      cover: track?.thumbnail || "",
+      line,
+      playing: player.playing,
+      currentTime: player.currentTime,
+      duration: player.duration,
+    }),
+  )
+}
+
 function applyVolume() {
   const level = player.muted ? 0 : player.volume
   if (video) video.volume = level
@@ -271,10 +307,14 @@ function ensureGraph() {
   compressor.ratio.value = 2
   compressor.attack.value = 0.02
   compressor.release.value = 0.25
+  trimA = ctx.createGain()
+  trimB = ctx.createGain()
   sourceA.connect(gainA)
   sourceB.connect(gainB)
-  gainA.connect(master)
-  gainB.connect(master)
+  gainA.connect(trimA)
+  gainB.connect(trimB)
+  trimA.connect(master)
+  trimB.connect(master)
   audioCtx = ctx
   wired = true
   routeMaster()
@@ -409,12 +449,22 @@ function startLoop() {
       lastTick = now
       const duration = Number.isFinite(element.duration) && element.duration > 0 ? element.duration : player.duration
       const music = getMusic()
-      if (music.sleepUntil && Date.now() >= music.sleepUntil) {
-        element.pause()
-        clearSleep()
-        stopLoop()
-        setPlayer({ playing: false, currentTime: element.currentTime, duration })
-        return
+      if (music.sleepUntil || music.sleepMode === "end") {
+        const left = music.sleepUntil ? (music.sleepUntil - Date.now()) / 1000 : duration - element.currentTime
+        if (left <= 8 && left > 0 && audioCtx && master && !sleepFading) {
+          sleepFading = true
+          master.gain.cancelScheduledValues(audioCtx.currentTime)
+          master.gain.linearRampToValueAtTime(0, audioCtx.currentTime + left)
+        }
+        if (left <= 0.15) {
+          element.pause()
+          clearSleep()
+          sleepFading = false
+          stopLoop()
+          setPlayer({ playing: false, currentTime: element.currentTime, duration })
+          applyVolume()
+          return
+        }
       }
       const track = currentTrack()
       if (track && player.playbackKind === "audio") {
@@ -424,6 +474,8 @@ function startLoop() {
         if (element.currentTime > 5) rememberPosition(track.path, element.currentTime)
       }
       maybeCrossfade(element)
+      prefetchAhead()
+      extendRadio()
       setPlayer({ currentTime: element.currentTime, duration, playing: true })
     }
     frame = requestAnimationFrame(tick)
@@ -623,7 +675,8 @@ async function load(index: number, autoplay = true) {
     return
   }
   const kind: PlaybackKind = source.info?.kind === "video" || source.info?.kind === "audio" ? source.info.kind : track.kind
-  if (kind === "audio" && (getMusic().crossfade > 0 || getMusic().normalize || !eqIsFlat(activeEq(track.path).bands))) ensureGraph()
+  const gainDb = source.info?.gain ?? 0
+  if (kind === "audio" && (getMusic().crossfade > 0 || getMusic().normalize || Math.abs(gainDb) > 0.2 || !eqIsFlat(activeEq(track.path).bands))) ensureGraph()
   void audioCtx?.resume()
   const element = kind === "video" ? video : audio
   const other = kind === "video" ? audio : video
@@ -645,6 +698,7 @@ async function load(index: number, autoplay = true) {
   setPlayer({ playbackKind: kind, error: null })
   element.loop = player.repeat === "one"
   element.src = source.src
+  setTrim(element, gainDb)
   applyVolume()
   placeVideo()
   await waitForMeta(element)
@@ -708,6 +762,7 @@ async function beginCrossfade(nextIndex: number, seconds: number) {
   const outGain = incoming === audioAlt ? gainA : gainB
   incoming.src = source.src
   incoming.loop = false
+  setTrim(incoming, source.info?.gain ?? 0)
   try {
     await incoming.play()
   } catch {
@@ -744,11 +799,39 @@ async function beginCrossfade(nextIndex: number, seconds: number) {
   }, seconds * 1000 + 40)
 }
 
-export function playTracks(queue: Track[], index: number) {
+let shelf: Track[] = []
+let warmed = ""
+
+export function rememberLibrary(tracks: Track[]) {
+  shelf = tracks
+}
+
+function prefetchAhead() {
+  if (!isTauri()) return
+  const next = nextPaths(player.order, player.index, 2)
+  const key = next.join(",")
+  if (!key || key === warmed) return
+  warmed = key
+  const paths = next.map((index) => player.queue[index]?.path).filter((path): path is string => Boolean(path))
+  void invoke("warm_next", { paths })
+}
+
+function extendRadio() {
+  if (!player.radio || !shelf.length) return
+  const pos = player.order.indexOf(player.index)
+  if (pos < 0 || player.order.length - pos > 2) return
+  const seed = currentTrack()
+  if (!seed) return
+  const have = new Set(player.queue.map((track) => trackKey(track.path)))
+  const more = relatedTracks(seed, shelf).filter((track) => !have.has(trackKey(track.path))).slice(0, 8)
+  if (more.length) queueTracks(more, "end")
+}
+
+export function playTracks(queue: Track[], index: number, radio = false) {
   if (!queue.length) return
   const safe = Math.min(Math.max(index, 0), queue.length - 1)
   const order = buildOrder(queue.length, safe, player.shuffle)
-  setPlayer({ queue, order })
+  setPlayer({ queue, order, radio })
   void load(safe)
 }
 
@@ -878,6 +961,7 @@ export function clearPlayback() {
     lyrics: null,
     lyricsState: "idle",
     playbackKind: null,
+    radio: false,
   })
   rememberSession(null)
 }

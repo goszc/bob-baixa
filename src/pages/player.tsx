@@ -147,6 +147,21 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
         <button type="button" className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink" onClick={translate}>
           {t("lyrics_translate")}
         </button>
+        <button
+          type="button"
+          className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink"
+          onClick={() => {
+            const track = player.queue[player.index]
+            if (!track || !isTauri()) return
+            void invoke<{ meaning: string; translation: string }>("lyric_meaning", {
+              title: track.title,
+              artist: track.artist,
+              lyrics: lines.map((line) => line.text).join("\n"),
+            }).then((found) => setTranslateNote(found.meaning || found.translation))
+          }}
+        >
+          {t("player_meaning")}
+        </button>
         <button type="button" className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink" onClick={onKaraoke} disabled={!lines.length}>
           {t("lyrics_karaoke")}
         </button>
@@ -155,7 +170,20 @@ function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () => void;
       {player.error ? <p className="px-3 py-10 text-[14px] text-danger">{t(player.error === "missing" ? "player_missing" : "player_failed")}</p> : null}
       {!player.error && player.lyricsState !== "loading" && (!lyrics || lyrics.instrumental || !lines.length) ? (
         <div className="px-3 py-6">
-          <p className="text-[14px] text-muted">{t(lyrics?.instrumental ? "lyrics_instrumental" : "lyrics_empty")}</p>
+          <p className="text-[14px] text-muted">{t(lyrics?.instrumental ? "lyrics_instrumental" : lyrics?.source === "ai" ? "lyrics_ai_mark" : "lyrics_empty")}</p>
+          {currentTrack() ? (
+            <button
+              type="button"
+              className="mt-3 text-[13px] text-muted hover:text-ink"
+              onClick={() => {
+                const playing = currentTrack()
+                if (!playing) return
+                void invoke("ai_transcribe", { path: playing.path }).then(() => reloadLyrics())
+              }}
+            >
+              {t("lyrics_ai")}
+            </button>
+          ) : null}
           {lyrics?.tried?.length ? (
             <ul className="mt-3 space-y-1 text-[12px] text-muted">
               {lyrics.tried.map((query) => (
@@ -296,6 +324,9 @@ export function Player() {
             </div>
             <button type="button" className="text-[12px] text-muted hover:text-ink" onClick={() => setEqOpen(true)}>
               {t("eq_title")}
+            </button>
+            <button type="button" className="text-[12px] text-muted hover:text-ink" onClick={() => void invoke("open_mini")}>
+              {t("player_mini")}
             </button>
           </div>
         </div>

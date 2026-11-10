@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { groupTracks, relatedTracks, trackKey, type Track } from "../lib/library"
 import { parseM3u } from "../lib/listening"
 import {
@@ -22,8 +22,10 @@ import {
   type LibraryView,
   type SleepMode,
 } from "../lib/music"
-import { clearPlayback, playTracks, queueTracks } from "../lib/player"
-import { requestDeleteTrack, useT } from "../store"
+import { invoke, isTauri } from "../lib/api"
+import { discoverySplit } from "../lib/discover"
+import { clearPlayback, playNext, playTracks, queueTracks, rememberLibrary } from "../lib/player"
+import { enqueueItems, requestDeleteTrack, useApp, useT } from "../store"
 import { cn } from "../lib/cn"
 import { CarePanel, MixList } from "./library-care"
 import { Retrospective } from "./retrospective"
@@ -57,9 +59,13 @@ export function LibraryPanel({
 }) {
   const music = useMusic()
   const t = useT()
+  useEffect(() => {
+    rememberLibrary(tracks)
+  }, [tracks])
   const [group, setGroup] = useState<string | null>(null)
   const [playlistId, setPlaylistId] = useState<string | null>(null)
   const [name, setName] = useState("")
+  const [described, setDescribed] = useState<Track[] | null>(null)
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
     if (!needle) return tracks
@@ -77,10 +83,25 @@ export function LibraryPanel({
     playTracks(list, index)
   }
 
-  function radio(track: Track) {
+  async function radio(track: Track) {
+    if (isTauri()) {
+      try {
+        const paths = await invoke<string[]>("ai_similar", {
+          path: track.path,
+          tracks: tracks.slice(0, 180).map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, lyrics: "" })),
+        })
+        const list = paths.map((path) => tracks.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
+        if (list.length > 1) {
+          playTracks(list, 0, true)
+          return
+        }
+      } catch {
+        /* artist and album still build the radio */
+      }
+    }
     const list = relatedTracks(track, tracks)
     if (list.length < 2) return
-    playTracks(list, 0)
+    playTracks(list, 0, true)
   }
 
   async function readFile(accept: string) {
@@ -137,16 +158,37 @@ export function LibraryPanel({
         ))}
       </div>
       {music.view !== "retro" && music.view !== "playlists" ? (
-        <Input value={query} onChange={(event) => onQuery(event.target.value)} placeholder={t("player_filter")} className="mb-3 h-9" />
+        <>
+        <Input value={query} onChange={(event) => { setDescribed(null); onQuery(event.target.value) }} placeholder={t("player_filter")} className="mb-3 h-9" />
+        {query.trim().length > 8 ? (
+          <button
+            type="button"
+            className="mb-3 text-left text-[12px] text-muted hover:text-ink"
+            onClick={() => {
+              if (!isTauri()) return
+              void invoke<string[]>("ai_describe", {
+                query,
+                tracks: tracks.slice(0, 180).map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, lyrics: "" })),
+              }).then((paths) => {
+                const list = paths.map((path) => tracks.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
+                setDescribed(list)
+                setView("tracks")
+              })
+            }}
+          >
+            {t("player_describe")}
+          </button>
+        ) : null}
+        </>
       ) : null}
       <div className="min-h-0 flex-1 space-y-1 overflow-auto pb-4">
         {music.view === "retro" ? <Retrospective /> : null}
         {music.view === "mix" ? <MixList tracks={filtered} /> : null}
         {music.view === "care" ? <CarePanel tracks={tracks} /> : null}
         {music.view === "tracks" ? (
-          filtered.length ? (
-            filtered.map((track, index) => (
-              <TrackRow key={track.path} track={track} library={tracks} onPlay={() => play(filtered, index)} onRadio={() => radio(track)} render={renderTrack} />
+          (described ?? filtered).length ? (
+            (described ?? filtered).map((track, index) => (
+              <TrackRow key={track.path} track={track} library={tracks} onPlay={() => play(described ?? filtered, index)} onRadio={() => void radio(track)} render={renderTrack} />
             ))
           ) : (
             <div className="px-2 py-8">
@@ -287,6 +329,7 @@ export function LibraryPanel({
         ) : null}
         {filtered.length === 0 && music.view === "tracks" ? null : null}
       </div>
+      <Studio tracks={tracks} />
       <ListeningTools />
       {music.view === "tracks" && filtered.length === 0 ? null : null}
     </div>
@@ -325,6 +368,16 @@ function TrackRow({
           <div className="absolute right-0 z-20 w-48 rounded-xl border border-line bg-surface p-1 shadow-sm">
             <MenuItem label={t("player_play_next")} onClick={() => { queueTracks([track], "next"); setOpen(false) }} />
             <MenuItem label={t("player_add_queue")} onClick={() => { queueTracks([track], "end"); setOpen(false) }} />
+            <MenuItem label={t("player_offline")} onClick={() => { void invoke("set_offline", { path: track.path, on: true }); setOpen(false) }} />
+            <MenuItem
+              label={t("player_skip")}
+              onClick={() => {
+                const raw = JSON.parse(localStorage.getItem("bob-dislike") || "[]") as string[]
+                localStorage.setItem("bob-dislike", JSON.stringify([...raw, track.path]))
+                playNext()
+                setOpen(false)
+              }}
+            />
             <MenuItem
               label={t("player_radio")}
               onClick={() => {
@@ -360,6 +413,77 @@ function TextButton({ label, onClick }: { label: string; onClick: () => void }) 
   )
 }
 
+function Studio({ tracks }: { tracks: Track[] }) {
+  const t = useT()
+  const app = useApp()
+  const [ask, setAsk] = useState("")
+  const [note, setNote] = useState("")
+  const rows = tracks.map((track) => ({ path: track.path, artist: track.artist, title: track.title, album: track.album, plays: 1 }))
+
+  function playPaths(paths: string[]) {
+    const list = paths.map((path) => tracks.find((track) => track.path === path)).filter((track): track is Track => Boolean(track))
+    if (list.length) playTracks(list, 0)
+  }
+
+  async function mood(name: string) {
+    if (!isTauri()) return
+    const paths = await invoke<string[]>("mood_mix", { mood: name, library: rows })
+    playPaths(paths)
+  }
+
+  async function askQueue() {
+    if (!isTauri() || !ask.trim()) return
+    const paths = await invoke<string[]>("natural_queue", { text: ask, library: rows })
+    playPaths(paths)
+    setNote(paths.length ? "" : t("lyrics_empty"))
+  }
+
+  async function discover() {
+    const plan = discoverySplit(Math.min(tracks.length, 12), app.config.discoverRatio)
+    const known = tracks.slice(0, plan.library)
+    if (known.length) playTracks(known, 0)
+    if (!isTauri()) return
+    const artists = [...new Set(tracks.map((track) => track.artist).filter(Boolean))].slice(0, 8)
+    const queries = await invoke<string[]>("discover_queries", { artists })
+    await enqueueItems(
+      queries.slice(0, plan.fresh || 2).map((query) => ({
+        url: `ytsearch1:${query}`,
+        title: query,
+        audioOnly: true,
+        audioFormat: "opus",
+        audioBitrate: "24k",
+      })),
+    )
+    setNote(t("player_discover"))
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="h-7 rounded-full bg-fill px-3 text-[12px] text-onfill" onClick={() => void discover()}>
+          {t("player_discover")}
+        </button>
+        <button type="button" className="h-7 rounded-full bg-soft px-3 text-[12px] text-muted" onClick={() => void mood(t("player_mood_study"))}>
+          {t("player_mood_study")}
+        </button>
+        <button type="button" className="h-7 rounded-full bg-soft px-3 text-[12px] text-muted" onClick={() => void mood(t("player_mood_train"))}>
+          {t("player_mood_train")}
+        </button>
+      </div>
+      <form
+        className="flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault()
+          void askQueue()
+        }}
+      >
+        <input value={ask} onChange={(event) => setAsk(event.target.value)} placeholder={t("player_ask")} className="h-9 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-[13px]" />
+      </form>
+      {note ? <p className="text-[12px] text-muted">{note}</p> : null}
+    </div>
+  )
+}
+
 function ListeningTools() {
   const t = useT()
   const music = useMusic()
@@ -368,17 +492,8 @@ function ListeningTools() {
     <div className="mt-2 space-y-2 border-t border-line pt-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[12px] text-muted">{t("player_crossfade")}</span>
-        {[0, 2, 3].map((seconds) => (
-          <button
-            key={seconds}
-            type="button"
-            aria-pressed={music.crossfade === seconds}
-            className={cn("h-7 rounded-full px-2 text-[12px]", music.crossfade === seconds ? "bg-fill text-onfill" : "bg-soft text-muted")}
-            onClick={() => setCrossfade(seconds)}
-          >
-            {seconds === 0 ? t("player_off") : `${seconds}s`}
-          </button>
-        ))}
+        <input type="range" min={0} max={12} step={1} value={music.crossfade} aria-label={t("player_crossfade")} onChange={(event) => setCrossfade(Number(event.target.value))} />
+        <span className="text-[12px] tabular-nums text-muted">{music.crossfade === 0 ? t("player_off") : `${music.crossfade}s`}</span>
       </div>
       <label className="flex items-center justify-between gap-3 text-[13px]">
         <span>

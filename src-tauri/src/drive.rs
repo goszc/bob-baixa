@@ -392,6 +392,66 @@ fn save_email(email: &str) {
     }
 }
 
+pub fn save_gemini_key(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if value.is_empty() {
+        #[cfg(windows)]
+        if let Ok(entry) = keyring_entry("gemini-api-key") {
+            let _ = entry.delete_credential();
+        }
+        if let Ok(dir) = root_dir().lock() {
+            let _ = std::fs::remove_file(dir.join(if cfg!(windows) { "gemini-key.dpapi" } else { "gemini-key.txt" }));
+        }
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(entry) = keyring_entry("gemini-api-key") {
+            if entry.set_password(value).is_ok() {
+                if entry.get_password().ok().as_deref() == Some(value) {
+                    return Ok(());
+                }
+            }
+        }
+        let path = data_file("gemini-key.dpapi")?;
+        let protected = dpapi_protect(value.as_bytes())?;
+        return std::fs::write(path, protected).map_err(|error| error.to_string());
+    }
+    #[cfg(not(windows))]
+    {
+        let path = data_file("gemini-key.txt")?;
+        std::fs::write(&path, value).map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    }
+}
+
+pub fn read_gemini_key() -> Option<String> {
+    #[cfg(windows)]
+    {
+        if let Ok(entry) = keyring_entry("gemini-api-key") {
+            if let Ok(value) = entry.get_password() {
+                if !value.trim().is_empty() {
+                    return Some(value);
+                }
+            }
+        }
+        let dir = root_dir().lock().ok()?.clone();
+        let bytes = std::fs::read(dir.join("gemini-key.dpapi")).ok()?;
+        let plain = dpapi_unprotect(&bytes).ok()?;
+        return String::from_utf8(plain).ok().filter(|value| !value.trim().is_empty());
+    }
+    #[cfg(not(windows))]
+    {
+        let dir = root_dir().lock().ok()?.clone();
+        std::fs::read_to_string(dir.join("gemini-key.txt")).ok().filter(|value| !value.trim().is_empty())
+    }
+}
+
 fn read_email() -> String {
     let Ok(dir) = root_dir().lock() else {
         return String::new();
@@ -725,7 +785,7 @@ fn update_path(path: &str, item: Upload) {
 }
 
 fn finish_upload(app: &tauri::AppHandle, item: &Upload, file_id: &str) {
-    if item.delete_local {
+    if item.delete_local && !crate::hub::pinned(&item.path) {
         let _ = std::fs::remove_file(&item.path);
         for sidecar in sibling_lrc_paths(Path::new(&item.path)) {
             let _ = std::fs::remove_file(sidecar);
@@ -1357,6 +1417,31 @@ fn file_label(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+pub fn queue_report() -> String {
+    let Ok(queue) = queue_lock().lock() else {
+        return "fila de envio indisponível".into();
+    };
+    if queue.is_empty() {
+        return "fila de envio vazia".into();
+    }
+    queue
+        .iter()
+        .map(|item| {
+            format!(
+                "{} | {} | {} | tentativas {} | enviados {}/{} | {}",
+                file_label(&item.path),
+                if item.phase.is_empty() { "aguardando" } else { item.phase.as_str() },
+                item.title,
+                item.attempts,
+                item.sent,
+                item.total,
+                item.error
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn log_path() -> PathBuf {
     root_dir().lock().map(|dir| dir.join("drive.log")).unwrap_or_else(|_| PathBuf::from("drive.log"))
 }
@@ -1593,6 +1678,114 @@ fn pull_state() -> Result<Option<String>, String> {
     }
     let text = response.text().map_err(|error| error.to_string())?;
     Ok(Some(text))
+}
+
+pub fn data_dir_public() -> Result<PathBuf, String> {
+    root_dir().lock().map(|dir| dir.clone()).map_err(|_| "não achei a pasta do app".to_string())
+}
+
+pub fn access_token() -> Result<String, String> {
+    Ok(bearer(false)?.token)
+}
+
+pub fn account(token: &str) -> Result<(u64, u64), String> {
+    let found = about_account(token)?;
+    Ok((found.usage, found.limit))
+}
+
+pub struct SimpleTrack {
+    pub id: String,
+    pub path: String,
+}
+
+pub fn list_simple() -> Result<Vec<SimpleTrack>, String> {
+    Ok(drive_play::ids()
+        .into_iter()
+        .map(|id| SimpleTrack { path: format!("drive:{id}"), id })
+        .collect())
+}
+
+pub fn cache_bytes_public() -> u64 {
+    drive_play::cache_bytes()
+}
+
+pub fn clear_cache_public() -> u64 {
+    drive_play::clear_stream_cache()
+}
+
+pub fn keep_offline(id: &str) -> Result<(), String> {
+    drive_play::keep_offline(id)
+}
+
+pub fn offline_copy(id: &str) -> Option<PathBuf> {
+    drive_play::offline_copy(id)
+}
+
+pub fn warm_public(id: &str) -> Result<(), String> {
+    drive_play::warm_preview(id)
+}
+
+pub fn repair_some() -> Result<(u32, u32, u32), String> {
+    drive_play::repair_some()
+}
+
+pub fn set_trashed(id: &str, trashed: bool) -> Result<(), String> {
+    let token = bearer(false)?.token;
+    let response = http()
+        .patch(format!("https://www.googleapis.com/drive/v3/files/{id}"))
+        .header("authorization", auth(&token))
+        .header("content-type", "application/json")
+        .body(format!("{{\"trashed\":{trashed}}}"))
+        .send()
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("lixeira recusou ({})", response.status()));
+    }
+    Ok(())
+}
+
+pub fn purge(id: &str) -> Result<(), String> {
+    let token = bearer(false)?.token;
+    let response = http()
+        .delete(format!("https://www.googleapis.com/drive/v3/files/{id}"))
+        .header("authorization", auth(&token))
+        .send()
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("apagar recusou ({})", response.status()));
+    }
+    Ok(())
+}
+
+pub fn trashed() -> Result<Vec<(String, String, String)>, String> {
+    let token = bearer(false)?.token;
+    let query = bob_core::percent_encode("trashed = true");
+    let response = http()
+        .get(format!("https://www.googleapis.com/drive/v3/files?q={query}&fields=files(id,name)&pageSize=40"))
+        .header("authorization", auth(&token))
+        .send()
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("não li a lixeira ({})", response.status()));
+    }
+    let value: serde_json::Value = response.json().map_err(|error| error.to_string())?;
+    Ok(value
+        .get("files")
+        .and_then(|item| item.as_array())
+        .map(|files| {
+            files
+                .iter()
+                .map(|file| {
+                    (
+                        file.get("id").and_then(|item| item.as_str()).unwrap_or("").to_string(),
+                        file.get("name").and_then(|item| item.as_str()).unwrap_or("").to_string(),
+                        file.get("name").and_then(|item| item.as_str()).unwrap_or("").to_string(),
+                    )
+                })
+                .filter(|(id, _, _)| !id.is_empty())
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 trait Pipe: Sized {

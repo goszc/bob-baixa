@@ -63,6 +63,33 @@ pub struct Config {
     pub hotkey_prev: String,
     #[serde(default = "default_hotkey_like")]
     pub hotkey_like: String,
+    /// Put a finished download on the playback queue.
+    #[serde(default = "default_true")]
+    pub queue_new_downloads: bool,
+    /// `end` appends. `next` plays it after the current track.
+    #[serde(default = "default_queue_where")]
+    pub queue_new_where: String,
+    /// Share of a discovery shuffle that should be new songs. 0 to 0.8.
+    #[serde(default = "default_discover_ratio")]
+    pub discover_ratio: f64,
+    #[serde(default = "default_flash")]
+    pub gemini_flash: String,
+    #[serde(default = "default_flash_fallback")]
+    pub gemini_flash_fallback: String,
+    #[serde(default = "default_bulk")]
+    pub gemini_bulk: String,
+    #[serde(default = "default_embed")]
+    pub gemini_embed: String,
+    #[serde(default = "default_transcribe")]
+    pub gemini_transcribe: String,
+    #[serde(default)]
+    pub gemini_auto_lyrics: bool,
+    #[serde(default = "default_lyrics_budget")]
+    pub gemini_lyrics_budget: u32,
+    #[serde(default)]
+    pub discord: bool,
+    #[serde(default)]
+    pub discord_client_id: String,
 }
 
 impl Default for Config {
@@ -112,8 +139,52 @@ impl Default for Config {
             hotkey_next: default_hotkey_next(),
             hotkey_prev: default_hotkey_prev(),
             hotkey_like: default_hotkey_like(),
+            queue_new_downloads: true,
+            queue_new_where: default_queue_where(),
+            discover_ratio: default_discover_ratio(),
+            gemini_flash: default_flash(),
+            gemini_flash_fallback: default_flash_fallback(),
+            gemini_bulk: default_bulk(),
+            gemini_embed: default_embed(),
+            gemini_transcribe: default_transcribe(),
+            gemini_auto_lyrics: false,
+            gemini_lyrics_budget: default_lyrics_budget(),
+            discord: false,
+            discord_client_id: String::new(),
         }
     }
+}
+
+fn default_flash() -> String {
+    "gemini-3.5-flash-lite".into()
+}
+
+fn default_flash_fallback() -> String {
+    "gemini-3.1-flash-lite".into()
+}
+
+fn default_bulk() -> String {
+    "gemma-4-31b-it".into()
+}
+
+fn default_embed() -> String {
+    "gemini-embedding-2".into()
+}
+
+fn default_transcribe() -> String {
+    "gemini-3.5-transcribe".into()
+}
+
+fn default_lyrics_budget() -> u32 {
+    5
+}
+
+fn default_queue_where() -> String {
+    "end".into()
+}
+
+fn default_discover_ratio() -> f64 {
+    0.35
 }
 
 fn default_translate_lang() -> String {
@@ -256,6 +327,14 @@ pub struct EnqueueItem {
     /// When set, the file is saved under `outputDir/<sanitized title>`.
     #[serde(default)]
     pub playlist_title: Option<String>,
+    #[serde(default)]
+    pub tag_artist: Option<String>,
+    #[serde(default)]
+    pub tag_album: Option<String>,
+    #[serde(default)]
+    pub tag_track: Option<u32>,
+    #[serde(default)]
+    pub tag_cover: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -418,6 +497,14 @@ pub struct PlaylistEntry {
     pub duration: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<String>,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub track: u32,
+    #[serde(default)]
+    pub cover: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -437,6 +524,8 @@ pub struct MediaItem {
     pub view_count: Option<u64>,
     pub formats: Vec<FormatOption>,
     pub entries: Vec<PlaylistEntry>,
+    #[serde(default)]
+    pub unmatched: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,6 +568,12 @@ pub enum BobEvent {
     Convert { job: ConvertJob },
     Schedule { at: Option<String> },
     Update { version: String },
+    /// A download finished and the player may append it.
+    Ready {
+        path: String,
+        title: String,
+        artist: String,
+    },
     /// Batch Opus conversion. `state` is `running`, `done`, `failed`, or `cancelled`.
     Economic {
         done: u32,

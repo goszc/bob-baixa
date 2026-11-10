@@ -432,11 +432,15 @@ pub async fn after_download(app: &tauri::AppHandle, path: &str, url: &str, title
     if grab && !url.trim().is_empty() {
         let _ = grab_manual_lyrics(app, &file, url).await;
     }
-    let identity = identify_track(app, &file, title, "", true).await;
+    let (hint_artist, hint_title) = crate::hub::tidy_title(app, title).await;
+    let hint = if hint_title.trim().is_empty() { title } else { hint_title.as_str() };
+    let identity = identify_track(app, &file, hint, &hint_artist, true).await;
     let (artist, album, kind_title) = match &identity {
         Some(hit) => (hit.artist.clone(), hit.album.clone(), hit.title.clone()),
         None => (String::new(), String::new(), title.to_string()),
     };
+    crate::loudness::apply_download(app, path, url).await;
+    crate::ai::maybe_auto_lyrics(app, path).await;
     crate::drive::enqueue_local(
         app,
         &file,
@@ -994,6 +998,9 @@ pub async fn translate_lines(app: tauri::AppHandle, lines: Vec<String>, target: 
     let dir = data_dir(&app).join("translate");
     let _ = std::fs::create_dir_all(&dir);
     let lines = lines.into_iter().take(400).collect::<Vec<_>>();
+    if let Some(translated) = crate::ai::translate_batch(&app, &lines, target).await {
+        return Ok(translated);
+    }
     tokio::task::spawn_blocking(move || translate_all(&dir, &lines, target))
         .await
         .map_err(|error| error.to_string())?

@@ -231,10 +231,139 @@ pub fn open_media(id: &str, range: Option<&str>) -> Result<MediaStream, String> 
         log_drive(&format!("stream {id} do cache"));
         return Ok(stream);
     }
+    if let Some(stream) = serve_preview(&id, &record, range) {
+        log_drive(&format!("stream {id} da prévia"));
+        return Ok(stream);
+    }
     stream_drive(&id, &record, range)
 }
 
+pub fn warm_preview(id: &str) -> Result<(), String> {
+    let id = safe_id(id)?;
+    let path = preview_path(&id);
+    if path.is_file() {
+        return Ok(());
+    }
+    let record = ensure_record(&id).unwrap_or_else(|_| LibraryRecord::bare(&id));
+    let span = bob_core::preview_span(record.size, record.duration);
+    let access = bearer(false)?;
+    let url = format!("https://www.googleapis.com/drive/v3/files/{id}?alt=media");
+    let response = http_stream()
+        .get(url)
+        .header("authorization", auth(&access.token))
+        .header("range", format!("bytes=0-{}", span.saturating_sub(1)))
+        .send()
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("prévia recusada ({})", response.status()));
+    }
+    let bytes = response.bytes().map_err(|error| error.to_string())?;
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(path, &bytes).map_err(|error| error.to_string())
+}
+
+pub fn clear_stream_cache() -> u64 {
+    let dir = cache_dir();
+    let mut freed = 0u64;
+    let Ok(entries) = std::fs::read_dir(&dir) else { return 0 };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        if name.ends_with(".preview") {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            freed += meta.len();
+        }
+        let _ = std::fs::remove_file(path);
+    }
+    freed
+}
+
+pub fn cache_bytes() -> u64 {
+    dir_bytes(&cache_dir()) + dir_bytes(&data_root().join("offline"))
+}
+
+fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    entries.flatten().map(|entry| entry.metadata().map(|meta| meta.len()).unwrap_or(0)).sum()
+}
+
+fn preview_path(id: &str) -> PathBuf {
+    cache_dir().join(format!("{id}.preview"))
+}
+
+fn serve_preview(id: &str, record: &LibraryRecord, range: Option<&str>) -> Option<MediaStream> {
+    let path = preview_path(id);
+    if !path.is_file() {
+        return None;
+    }
+    let bytes = std::fs::read(&path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let start = range.and_then(parse_byte_range).map(|parsed| parsed.start).unwrap_or(0);
+    if start > 0 {
+        return None;
+    }
+    let total = record.size.max(bytes.len() as u64);
+    let mime = content_type_for(&record.mime, &record.name);
+    let body = PreviewThenDrive {
+        preview: std::io::Cursor::new(bytes),
+        rest_at: std::fs::metadata(&path).ok()?.len(),
+        id: id.to_string(),
+        rest: None,
+    };
+    Some(stream_parts(200, &mime, None, Some(total as usize), Box::new(body)))
+}
+
+struct PreviewThenDrive {
+    preview: std::io::Cursor<Vec<u8>>,
+    rest_at: u64,
+    id: String,
+    rest: Option<Box<dyn Read + Send>>,
+}
+
+impl Read for PreviewThenDrive {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let got = std::io::Read::read(&mut self.preview, buf)?;
+        if got > 0 {
+            return Ok(got);
+        }
+        if self.rest.is_none() {
+            let tail = open_tail(&self.id, self.rest_at).map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            self.rest = Some(tail);
+        }
+        self.rest.as_mut().unwrap().read(buf)
+    }
+}
+
+fn open_tail(id: &str, start: u64) -> Result<Box<dyn Read + Send>, String> {
+    let access = bearer(false)?;
+    let url = format!("https://www.googleapis.com/drive/v3/files/{id}?alt=media");
+    let response = http_stream()
+        .get(url)
+        .header("authorization", auth(&access.token))
+        .header("range", format!("bytes={start}-"))
+        .send()
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("continuação recusada ({})", response.status()));
+    }
+    Ok(Box::new(response))
+}
+
 pub fn repair_library() -> Result<(u32, u32, u32), String> {
+    repair_capped(u32::MAX)
+}
+
+pub fn repair_some() -> Result<(u32, u32, u32), String> {
+    repair_capped(6)
+}
+
+fn repair_capped(limit: u32) -> Result<(u32, u32, u32), String> {
     let token = bearer(false).map_err(|error| error)?;
     let files = list_app_files(&token.token)?;
     let mut tracks = 0u32;
@@ -256,6 +385,9 @@ pub fn repair_library() -> Result<(u32, u32, u32), String> {
         }
         if !is_audio_name(&media.name) && !is_video_name(&media.name) && media.kind_prop != "audio" && media.kind_prop != "video" {
             continue;
+        }
+        if tracks >= limit {
+            break;
         }
         tracks += 1;
         let mut record = find_record(&media.id).unwrap_or_else(|| LibraryRecord::bare(&media.id));
@@ -773,6 +905,30 @@ fn save_library(records: &[LibraryRecord]) {
     if let Ok(text) = serde_json::to_string(records) {
         let _ = std::fs::write(library_path(), text);
     }
+}
+
+pub fn keep_offline(id: &str) -> Result<(), String> {
+    let id = safe_id(id)?;
+    let dest = data_root().join("offline").join(&id);
+    if dest.is_file() {
+        return Ok(());
+    }
+    if let Some(parent) = dest.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let access = bearer(false)?;
+    let size = find_record(&id).map(|record| record.size).unwrap_or(0);
+    download_to(&access.token, &id, &dest, size)
+}
+
+pub fn offline_copy(id: &str) -> Option<PathBuf> {
+    let id = safe_id(id).ok()?;
+    let path = data_root().join("offline").join(id);
+    path.is_file().then_some(path)
+}
+
+pub fn ids() -> Vec<String> {
+    load_library().into_iter().map(|record| record.id).collect()
 }
 
 fn library_path() -> PathBuf {

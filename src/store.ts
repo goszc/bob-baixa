@@ -2,7 +2,8 @@ import { useSyncExternalStore } from "react"
 import { applyWindowTheme, chooseFile, chooseFolder, errorText, invoke, isTauri, listenBob, readTextFile, revealPath } from "./lib/api"
 import { markRemoved, refreshCatalog, unmarkRemoved } from "./lib/catalog"
 import { extractUrls, isMediaPath, isTextPath, isTime, nextIsoFromClock } from "./lib/format"
-import { trackKey } from "./lib/library"
+import { trackKey, trackKind, type Track } from "./lib/library"
+import { queueTracks } from "./lib/player"
 import { forgetTracks } from "./lib/player"
 import { presetFromConfig, presetPatch } from "./lib/presets"
 import type { DownloadPreset } from "./lib/types"
@@ -232,6 +233,27 @@ function withClip(item: EnqueueItem): EnqueueItem {
   }
 }
 
+function spotifyItem(
+  media: { url: string; channel?: string; title: string },
+  entry: { url: string; title: string; thumbnail?: string; duration?: number; artist?: string; album?: string; track?: number; cover?: string },
+): EnqueueItem {
+  const spotify = media.url.includes("open.spotify.com") || media.channel === "spotify"
+  return {
+    url: entry.url,
+    title: entry.title,
+    thumbnail: entry.thumbnail,
+    duration: entry.duration,
+    playlistTitle: media.title,
+    audioOnly: spotify ? true : undefined,
+    audioFormat: spotify ? "opus" : undefined,
+    audioBitrate: spotify ? "24k" : undefined,
+    tagArtist: entry.artist,
+    tagAlbum: entry.album,
+    tagTrack: entry.track,
+    tagCover: entry.cover || entry.thumbnail,
+  }
+}
+
 function itemsFromAnalyzed(): EnqueueItem[] {
   const current = getState()
   const items: EnqueueItem[] = []
@@ -240,15 +262,7 @@ function itemsFromAnalyzed(): EnqueueItem[] {
       const picked = new Set(current.entryChoice[media.id] ?? media.entries.map((entry) => entry.id))
       for (const entry of media.entries) {
         if (!picked.has(entry.id)) continue
-        items.push(
-          withClip({
-            url: entry.url,
-            title: entry.title,
-            thumbnail: entry.thumbnail,
-            duration: entry.duration,
-            playlistTitle: media.title,
-          }),
-        )
+        items.push(withClip(spotifyItem(media, entry)))
       }
       continue
     }
@@ -542,15 +556,7 @@ export async function addAnalyzed(id: string) {
   const picked = new Set(getState().entryChoice[id] ?? [])
   const items = media.entries
     .filter((entry) => picked.has(entry.id))
-    .map((entry) =>
-      withClip({
-        url: entry.url,
-        title: entry.title,
-        thumbnail: entry.thumbnail,
-        duration: entry.duration,
-        playlistTitle: media.title,
-      }),
-    )
+    .map((entry) => withClip(spotifyItem(media, entry)))
   await considerEnqueue(items)
 }
 
@@ -894,7 +900,7 @@ export function openNotes() {
 
 export async function dismissNotes() {
   const ack = getState().whatsNew
-  const version = getState().tools.appVersion || "0.2.0"
+  const version = getState().tools.appVersion || "0.6.0"
   setState((current) => ({
     ...current,
     showNotes: false,
@@ -924,6 +930,28 @@ export async function pickConvertFile() {
 
 export async function openOutput(path: string) {
   await revealPath(path)
+}
+
+export async function makeDiagnostic() {
+  setState({ busy: "tools", error: null })
+  try {
+    if (isTauri()) await invoke("make_diagnostic")
+    say("settings_diagnostic_done")
+    setState({ busy: null })
+  } catch (error) {
+    setState({ busy: null, error: errorText(error) })
+  }
+}
+
+export async function measureLibrary() {
+  setState({ busy: "tools", error: null })
+  try {
+    const count = isTauri() ? await invoke<number>("backfill_gains", { root: getState().config.outputDir }) : 0
+    say("settings_gain_done", { n: count })
+    setState({ busy: null })
+  } catch (error) {
+    setState({ busy: null, error: errorText(error) })
+  }
 }
 
 export async function checkUpdates() {
@@ -1033,6 +1061,7 @@ type BobEvent =
   | { type: "convert"; job: ConvertJob }
   | { type: "schedule"; at: string | null }
   | { type: "update"; version: string }
+  | { type: "ready"; path: string; title: string; artist: string }
 
 function applyEvent(event: BobEvent) {
   if (event.type === "jobs") setState({ jobs: event.jobs })
@@ -1050,6 +1079,19 @@ function applyEvent(event: BobEvent) {
   } else if (event.type === "convert") setState({ convertJob: event.job, busy: event.job.state === "running" ? "convert" : null })
   else if (event.type === "schedule") setState({ scheduleAt: event.at })
   else if (event.type === "update") setState({ updateOffer: true, busy: null })
+  else if (event.type === "ready" && getState().config.queueNewDownloads) {
+    const track: Track = {
+      id: event.path,
+      path: event.path,
+      title: event.title || event.path,
+      artist: event.artist,
+      album: "",
+      folder: "",
+      pageUrl: "",
+      kind: trackKind(event.path),
+    }
+    queueTracks([track], getState().config.queueNewWhere === "next" ? "next" : "end")
+  }
 }
 
 async function bindDesktopDrag() {

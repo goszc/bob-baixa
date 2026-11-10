@@ -26,6 +26,8 @@ pub struct MediaInspect {
     pub src: String,
     #[serde(default)]
     pub cover: String,
+    #[serde(default)]
+    pub gain: f64,
 }
 
 /// Inspect a file that was already downloaded. Nothing here talks to YouTube.
@@ -33,6 +35,24 @@ pub struct MediaInspect {
 pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaInspect, String> {
     if let Some(id) = path.strip_prefix("drive:") {
         let record = crate::drive::describe_drive(id);
+        if let Some(local) = crate::drive::offline_copy(id) {
+            let _ = app.asset_protocol_scope().allow_file(&local);
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(src) = window.convert_file_src(local.as_path(), None) {
+                    return Ok(MediaInspect {
+                        exists: true,
+                        kind: record.kind,
+                        title: record.title,
+                        artist: record.artist,
+                        album: record.album,
+                        duration: record.duration,
+                        src,
+                        cover: record.cover,
+                        gain: saved_gain(&app, &path),
+                    });
+                }
+            }
+        }
         return Ok(MediaInspect {
             exists: true,
             kind: record.kind,
@@ -42,6 +62,7 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
             duration: record.duration,
             src: format!("http://127.0.0.1:47821/drive/{id}"),
             cover: record.cover,
+            gain: saved_gain(&app, &path),
         });
     }
     let file = PathBuf::from(&path);
@@ -56,6 +77,7 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
             duration: None,
             src: String::new(),
             cover: String::new(),
+            gain: 0.0,
         });
     }
     app.asset_protocol_scope()
@@ -80,7 +102,19 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
         duration: embedded.duration,
         src,
         cover: String::new(),
+        gain: saved_gain(&app, &path),
     })
+}
+
+fn saved_gain(app: &tauri::AppHandle, path: &str) -> f64 {
+    let dir = app
+        .state::<crate::runtime::AppState>()
+        .inner
+        .try_lock()
+        .ok()
+        .map(|inner| inner.data_dir.clone())
+        .unwrap_or_default();
+    crate::loudness::gain_for(&dir, path).unwrap_or(0.0)
 }
 
 /// Embedded tags, sibling `.lrc`, then lrcmux, Karalyr, LRCLIB and lyrics.ovh.
@@ -437,6 +471,12 @@ pub async fn scan_library(app: tauri::AppHandle, path: Option<String>) -> Result
 
 #[tauri::command]
 pub async fn delete_library_track(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    if let Some(id) = path.strip_prefix("drive:") {
+        let id = id.to_string();
+        return tokio::task::spawn_blocking(move || crate::drive::set_trashed(&id, true))
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     let (root, language) = {
         let inner = app.state::<AppState>().inner.clone().lock_owned().await;
         (inner.config.output_dir.clone(), inner.config.language.clone())

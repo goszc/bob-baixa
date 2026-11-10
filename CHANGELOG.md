@@ -1,5 +1,23 @@
 # changelog
 
+## 0.6.0
+
+- uma playlist, uma faixa ou as curtidas podem ficar disponíveis offline. a cópia local permanece mesmo com manter só no drive, e toca sem internet
+- cada faixa do drive guarda os primeiros 15 segundos neste computador, então o play começa na hora enquanto o resto chega. a próxima da fila é preparada durante a atual
+- ao abrir, o app confere letra, capa e ficha do que falta, com calma, e avisa o que completou
+- configurações mostra o espaço do bob baixa, o que está offline e o que está só na nuvem, e liberar espaço limpa o cache sem apagar o offline
+- apagar uma faixa do drive manda para a lixeira. dá para restaurar ou apagar de vez
+- um link público do spotify ou do youtube vira uma lista para revisar. o que não achar no youtube aparece embaixo. o download econômico entra na fila
+- rádio continua com faixas parecidas que já estão na biblioteca. descobrir mistura a biblioteca com músicas novas, buscadas e baixadas no modo econômico. dá para pular com não curti
+- um download que termina entra na fila. dá para desligar ou mandar tocar a seguir
+- a chave do gemini, de aistudio.google.com/apikey, fica guardada como o token do drive. o padrão é gemini-3.5-flash-lite, com gemini-3.1-flash-lite se o primeiro lotar, gemma-4-31b-it para lote e gemini-embedding-2 para busca. com ela, o app sugere o descobrir, limpa título de youtube, monta clima, traduz e explica a letra, escreve uma retrospectiva e monta uma fila a partir de uma frase. sem a chave, valem as regras e o histórico
+- a transcrição gemini-3.5-transcribe gera um .lrc marcado como gerada por ia, no botão ou sozinha dentro de um limite diário
+- buscar por descrição usa o embedding e, sem chave, as palavras da letra e dos títulos
+- o volume da faixa é medido em lufs e aplicado na reprodução. o crossfade vai de 0 a 12 segundos. o timer de sono abaixa o volume antes de parar
+- o discord pode mostrar ouvindo a faixa no bob baixa. o mini player fica sempre por cima
+- gerar diagnóstico junta um zip na área de trabalho, sem chaves nem tokens
+- ouvir no celular é uma página estática em docs/ouvir, para o github pages
+
 ## 0.5.4
 
 - um mp4 que ficou só no drive toca o vídeo na capa, em vez de um quadrado cinza. o proxy encaminha o range e responde na hora, com um cache pequeno no disco

@@ -189,6 +189,16 @@ export function Home() {
                   )
                 })}
               </ul>
+              {media.unmatched?.length ? (
+                <div className="mt-3 border-t border-line px-1 pt-3 text-[13px] text-muted">
+                  <p>{t("import_unmatched")}</p>
+                  <ul className="mt-1 space-y-1">
+                    {media.unmatched.map((name) => (
+                      <li key={name}>{name}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </article>
           ),
         )}

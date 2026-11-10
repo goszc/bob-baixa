@@ -1,5 +1,11 @@
+mod ai;
+mod diagnose;
+mod discord;
 mod drive;
 mod enrich;
+mod hub;
+mod loudness;
+mod spotify;
 mod hidden;
 mod media_session;
 mod playback;
@@ -176,6 +182,18 @@ async fn set_now_playing(
     let playing = playing.unwrap_or(false);
     let album = album.unwrap_or_default();
     let art = media_session::encode_artwork(artwork.as_deref());
+    let discord_on = {
+        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        if inner.config.discord {
+            Some((inner.config.discord_client_id.clone(), title.clone(), artist.clone(), playing))
+        } else {
+            discord::clear();
+            None
+        }
+    };
+    if let Some((client_id, title, artist, playing)) = discord_on {
+        let _ = discord::update(&client_id, &title, &artist, playing);
+    }
     let _ = app.run_on_main_thread(move || {
         media_session::apply(
             media_session::NowPlaying {
@@ -223,6 +241,52 @@ fn read_text_file(path: String) -> Result<String, String> {
     }
     let text = std::fs::read_to_string(file).map_err(|error| error.to_string())?;
     Ok(text.chars().take(200_000).collect())
+}
+
+#[tauri::command]
+async fn open_mini(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+    if let Some(window) = app.get_webview_window("mini") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    let window = WebviewWindowBuilder::new(&app, "mini", WebviewUrl::App("index.html?mini=1".into()))
+        .title("bob baixa")
+        .inner_size(380.0, 156.0)
+        .min_inner_size(320.0, 140.0)
+        .resizable(false)
+        .always_on_top(true)
+        .decorations(false)
+        .skip_taskbar(false)
+        .visible(true)
+        .build()
+        .map_err(|error| error.to_string())?;
+    let _ = window.set_always_on_top(true);
+    Ok(())
+}
+
+#[tauri::command]
+async fn close_mini(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("mini") {
+        let _ = window.close();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn discord_presence(app: tauri::AppHandle, title: String, artist: String, playing: bool) -> Result<(), String> {
+    let (enabled, client_id) = {
+        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        (inner.config.discord, inner.config.discord_client_id.clone())
+    };
+    if !enabled {
+        discord::clear();
+        return Ok(());
+    }
+    discord::update(&client_id, &title, &artist, playing)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -306,6 +370,33 @@ pub fn run() {
             drive::drive_push_state,
             drive::drive_pull_state,
             drive::drive_repair,
+            hub::set_offline,
+            hub::offline_paths,
+            hub::drive_space,
+            hub::free_cache,
+            hub::warm_next,
+            hub::list_trash,
+            hub::restore_trash,
+            hub::purge_trash,
+            hub::gemini_status,
+            hub::gemini_save_key,
+            hub::clean_title,
+            hub::lyric_meaning,
+            hub::mood_mix,
+            hub::natural_queue,
+            hub::discover_queries,
+            ai::ai_usage,
+            ai::ai_wrapped,
+            ai::ai_meaning,
+            ai::ai_describe,
+            ai::ai_similar,
+            ai::ai_transcribe,
+            loudness::track_gain,
+            loudness::backfill_gains,
+            open_mini,
+            close_mini,
+            discord_presence,
+            diagnose::make_diagnostic,
             set_now_playing
         ])
         .run(tauri::generate_context!())

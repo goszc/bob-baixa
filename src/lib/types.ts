@@ -74,6 +74,18 @@ export interface Config {
   hotkeyNext: string
   hotkeyPrev: string
   hotkeyLike: string
+  queueNewDownloads: boolean
+  queueNewWhere: "end" | "next"
+  discoverRatio: number
+  geminiFlash: string
+  geminiFlashFallback: string
+  geminiBulk: string
+  geminiEmbed: string
+  geminiTranscribe: string
+  geminiAutoLyrics: boolean
+  geminiLyricsBudget: number
+  discord: boolean
+  discordClientId: string
 }
 
 export interface DownloadPreset {
@@ -110,6 +122,10 @@ export interface PlaylistEntry {
   title: string
   duration?: number
   thumbnail?: string
+  artist?: string
+  album?: string
+  track?: number
+  cover?: string
 }
 
 export interface MediaItem {
@@ -123,6 +139,7 @@ export interface MediaItem {
   viewCount?: number
   formats: FormatOption[]
   entries: PlaylistEntry[]
+  unmatched?: string[]
 }
 
 export interface Job {
@@ -215,6 +232,10 @@ export interface EnqueueItem {
   audioFormat?: string
   audioBitrate?: string
   playlistTitle?: string
+  tagArtist?: string
+  tagAlbum?: string
+  tagTrack?: number
+  tagCover?: string
 }
 
 export const defaultConfig: Config = {
@@ -257,4 +278,16 @@ export const defaultConfig: Config = {
   hotkeyNext: "ctrl+alt+right",
   hotkeyPrev: "ctrl+alt+left",
   hotkeyLike: "ctrl+alt+l",
+  queueNewDownloads: true,
+  queueNewWhere: "end",
+  discoverRatio: 0.35,
+  geminiFlash: "gemini-3.5-flash-lite",
+  geminiFlashFallback: "gemini-3.1-flash-lite",
+  geminiBulk: "gemma-4-31b-it",
+  geminiEmbed: "gemini-embedding-2",
+  geminiTranscribe: "gemini-3.5-transcribe",
+  geminiAutoLyrics: false,
+  geminiLyricsBudget: 5,
+  discord: false,
+  discordClientId: "",
 }
