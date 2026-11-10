@@ -185,7 +185,7 @@ async fn set_now_playing(
     let discord_on = {
         let inner = app.state::<AppState>().inner.clone().lock_owned().await;
         if inner.config.discord {
-            Some((inner.config.discord_client_id.clone(), title.clone(), artist.clone(), playing))
+            Some((discord_id(&inner.config.discord_client_id), title.clone(), artist.clone(), playing))
         } else {
             discord::clear();
             None
@@ -280,13 +280,17 @@ async fn close_mini(app: tauri::AppHandle) -> Result<(), String> {
 async fn discord_presence(app: tauri::AppHandle, title: String, artist: String, playing: bool) -> Result<(), String> {
     let (enabled, client_id) = {
         let inner = app.state::<AppState>().inner.clone().lock_owned().await;
-        (inner.config.discord, inner.config.discord_client_id.clone())
+        (inner.config.discord, discord_id(&inner.config.discord_client_id))
     };
     if !enabled {
         discord::clear();
         return Ok(());
     }
     discord::update(&client_id, &title, &artist, playing)
+}
+
+fn discord_id(configured: &str) -> String {
+    bob_core::discord_client_id(configured, option_env!("BOB_DISCORD_APP_ID").unwrap_or(""))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -1,5 +1,10 @@
 # changelog
 
+## 0.6.1
+
+- ouvir no celular publica pelo github pages. o login usa um cliente oauth do tipo aplicativo da web, separado do cliente desktop, com o modelo de token do google identity services e o escopo drive.file. os dois clientes precisam estar no mesmo projeto para a página ver as faixas que o programa enviou
+- o id do discord pode vir do segredo BOB_DISCORD_APP_ID na compilação. o campo nas configurações continua valendo quando está preenchido
+
 ## 0.6.0
 
 - uma playlist, uma faixa ou as curtidas podem ficar disponíveis offline. a cópia local permanece mesmo com manter só no drive, e toca sem internet

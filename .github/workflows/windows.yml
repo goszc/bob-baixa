@@ -26,6 +26,7 @@ jobs:
         env:
           BOB_GOOGLE_CLIENT_ID: ${{ secrets.BOB_GOOGLE_CLIENT_ID }}
           BOB_GOOGLE_CLIENT_SECRET: ${{ secrets.BOB_GOOGLE_CLIENT_SECRET }}
+          BOB_DISCORD_APP_ID: ${{ secrets.BOB_DISCORD_APP_ID }}
         run: npm run tauri build -- --no-bundle
       - name: installer
         working-directory: packaging

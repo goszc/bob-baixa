@@ -1,0 +1,42 @@
+name: pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: copy the phone page and inject the web client id
+        env:
+          BOB_GOOGLE_WEB_CLIENT_ID: ${{ secrets.BOB_GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          mkdir -p _site/ouvir
+          cp -a docs/ouvir/. _site/ouvir/
+          printf '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=ouvir/"><title>bob baixa</title><p><a href="ouvir/">ouvir</a></p>\n' > _site/index.html
+          if [ -z "$BOB_GOOGLE_WEB_CLIENT_ID" ]; then
+            echo "segredo BOB_GOOGLE_WEB_CLIENT_ID ausente. a página sobe, mas o login fica desligado."
+          else
+            node scripts/inject-web-client.mjs _site/ouvir/config.js "$BOB_GOOGLE_WEB_CLIENT_ID"
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

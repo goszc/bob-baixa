@@ -40,6 +40,15 @@ pub fn pipe_path(index: u8) -> String {
     format!(r"\\.\pipe\discord-ipc-{index}")
 }
 
+/// A pasted id wins. An empty settings field keeps the id baked in at build time.
+pub fn discord_client_id(configured: &str, built_in: &str) -> String {
+    let configured = configured.trim();
+    if !configured.is_empty() {
+        return configured.to_string();
+    }
+    built_in.trim().to_string()
+}
+
 fn clean(value: &str) -> String {
     value.chars().filter(|c| *c != '"' && *c != '\n' && *c != '\r').take(120).collect()
 }
@@ -57,5 +66,8 @@ mod tests {
         let text = activity(4, 1, "Saudade", "artista", true);
         assert!(text.contains("ouvindo Saudade no bob baixa"));
         assert_eq!(pipe_path(0), r"\\.\pipe\discord-ipc-0");
+        assert_eq!(discord_client_id("", "123"), "123");
+        assert_eq!(discord_client_id("  ", "123"), "123");
+        assert_eq!(discord_client_id("999", "123"), "999");
     }
 }
