@@ -113,9 +113,9 @@ export function Shell({ children }: { children: ReactNode }) {
       <PlayerEngine />
       {app.updateOffer ? (
         <div className={cn("fixed left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill", app.page === "player" ? "bottom-6" : "bottom-24")}>
-          <span>{t("update_ready")}</span>
+          <span>{t("update_ready", { version: app.updateVersion })}</span>
           <button type="button" className="underline" onClick={() => void applyUpdate()}>
-            {t("restart")}
+            {t("update_install")}
           </button>
         </div>
       ) : app.toast ? (

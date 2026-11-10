@@ -8,6 +8,8 @@ import { Select } from "../components/ui/select"
 import { Switch } from "../components/ui/switch"
 import { Textarea } from "../components/ui/textarea"
 import { formatClock } from "../lib/format"
+import { liveStats } from "../lib/stats"
+import { useMusic } from "../lib/music"
 import type { Key } from "../lib/i18n"
 import { builtinPresets, configMatchesPreset } from "../lib/presets"
 import type { Quality } from "../lib/types"
@@ -74,6 +76,7 @@ export function Home() {
   return (
     <div>
       <PageHeader title={t("download_title")} sub={t("download_sub")} />
+      <LiveCard />
       {!toolsReady ? (
         <div className="mb-6">
           <div className="flex items-center justify-between text-[13px] text-muted">
@@ -337,6 +340,28 @@ function Presets() {
           </Button>
         ) : null}
       </div>
+    </div>
+  )
+}
+
+function LiveCard() {
+  const t = useT()
+  const music = useMusic()
+  const stats = liveStats(music.events, Date.now())
+  const hour = stats.hour == null ? "—" : `${String(stats.hour).padStart(2, "0")}h`
+  const cards = [
+    [t("home_week"), `${Math.round(stats.weekMinutes)} min`],
+    [t("home_month_artist"), stats.artist || "—"],
+    [t("home_hour"), hour],
+  ]
+  return (
+    <div className="mb-8 grid grid-cols-3 gap-3">
+      {cards.map(([label, value]) => (
+        <div key={label} className="rounded-2xl bg-surface px-4 py-4">
+          <div className="text-[12px] text-muted">{label}</div>
+          <div className="mt-1 truncate text-[18px] tracking-[-0.03em]">{value}</div>
+        </div>
+      ))}
     </div>
   )
 }

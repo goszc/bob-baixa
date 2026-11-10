@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
-  Clapperboard,
   Heart,
-  ListMusic,
   Maximize2,
   Pause,
-  PictureInPicture2,
   Play,
   Repeat,
   Repeat1,
@@ -328,6 +325,7 @@ export function Player() {
   const [karaoke, setKaraoke] = useState(false)
   const [gear, setGear] = useState(false)
   const [askOpen, setAskOpen] = useState(false)
+  const [viewOpen, setViewOpen] = useState(false)
   const [ask, setAsk] = useState("")
   const [note, setNote] = useState("")
   const [ratio, setRatio] = useState(16 / 9)
@@ -484,7 +482,7 @@ export function Player() {
     const paths = await runAi(t("ai_thinking"), "gemini-3.5-flash-lite", () => invoke<string[]>("natural_queue", { text, library: rows }), (found) => `${found.length}`)
     const list = paths.map((path) => library.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
     if (list.length) playTracks(list, 0)
-    setNote(list.length ? `${list.length}` : t("lyrics_empty"))
+    setNote(list.length ? `Fila com ${list.length} ${list.length === 1 ? "música" : "músicas"}` : t("lyrics_empty"))
   }
 
   const transport = (
@@ -504,25 +502,49 @@ export function Player() {
       <TransportButton label={repeatLabel} pressed={player.repeat !== "off"} disabled={!player.queue.length} onClick={cycleRepeat}>
         {player.repeat === "one" ? <Repeat1 className="h-[18px] w-[18px]" /> : <Repeat className="h-[18px] w-[18px]" />}
       </TransportButton>
-      <IconButton label={loved ? t("player_unlike") : t("player_like")} pressed={loved} onClick={() => track && toggleLike(track.path)}>
-        <Heart className="h-[18px] w-[18px]" fill={loved ? "currentColor" : "none"} />
-      </IconButton>
-      <IconButton label={t("player_queue")} pressed={player.panel === "queue"} onClick={() => setPanel("queue")}>
-        <ListMusic className="h-[18px] w-[18px]" />
-      </IconButton>
-      <IconButton label={cinema ? t("player_cinema_off") : t("player_cinema")} pressed={cinema} onClick={() => setCinema(!cinema)}>
-        <Clapperboard className="h-[18px] w-[18px]" />
-      </IconButton>
+    </div>
+  )
+
+  const tools = (
+    <div className="flex items-center gap-0.5">
       <IconButton
         label={t("player_ask")}
         pressed={askOpen}
         onClick={() => {
           setAskOpen((value) => !value)
           setGear(false)
+          setViewOpen(false)
         }}
       >
-        <Sparkles className="h-[18px] w-[18px]" />
+        <Sparkles className="h-4 w-4" />
       </IconButton>
+      <div className="relative">
+        <IconButton label={t("player_fullscreen")} pressed={viewOpen} onClick={() => setViewOpen((value) => !value)}>
+          <Maximize2 className="h-4 w-4" />
+        </IconButton>
+        {viewOpen ? (
+          <div className="absolute bottom-10 right-0 z-20 flex flex-col items-start rounded-2xl border border-line bg-surface p-2 text-[13px]">
+            <button type="button" className="px-2 py-1 text-muted hover:text-ink" onClick={() => setCinema(!cinema)}>
+              {cinema ? t("player_cinema_off") : t("player_cinema")}
+            </button>
+            <button
+              type="button"
+              className="px-2 py-1 text-muted hover:text-ink"
+              onClick={() => {
+                const node = rootRef.current
+                if (!node) return
+                if (document.fullscreenElement) void document.exitFullscreen()
+                else void node.requestFullscreen()
+              }}
+            >
+              {t("player_fullscreen")}
+            </button>
+            <button type="button" className="px-2 py-1 text-muted hover:text-ink" onClick={() => void invoke("open_mini").catch(() => {})}>
+              {t("player_mini")}
+            </button>
+          </div>
+        ) : null}
+      </div>
       <div className="relative">
         <IconButton
           label={t("player_tools")}
@@ -578,27 +600,18 @@ export function Player() {
           </div>
         ) : null}
       </div>
-      <IconButton
-        label={t("player_fullscreen")}
-        onClick={() => {
-          const node = rootRef.current
-          if (!node) return
-          if (document.fullscreenElement) void document.exitFullscreen()
-          else void node.requestFullscreen()
-        }}
-      >
-        <Maximize2 className="h-[18px] w-[18px]" />
-      </IconButton>
-      <IconButton label={t("player_mini")} onClick={() => void invoke("open_mini").catch(() => {})}>
-        <PictureInPicture2 className="h-[18px] w-[18px]" />
-      </IconButton>
     </div>
   )
 
   const meta = (
     <div className="mx-auto w-full max-w-[560px]">
-      <h1 className="truncate text-center text-[20px] font-medium tracking-[-0.03em]">
-        {title || (library.length ? t("player_idle") : pending ? t("searching") : t("player_empty"))}
+      <h1 className="flex items-center justify-center gap-2 truncate text-center text-[20px] font-medium tracking-[-0.03em]">
+        <span className="truncate">{title || (library.length ? t("player_idle") : pending ? t("searching") : t("player_empty"))}</span>
+        {track ? (
+          <button type="button" aria-label={loved ? t("player_unlike") : t("player_like")} className="text-muted hover:text-ink" onClick={() => toggleLike(track.path)}>
+            <Heart className="h-4 w-4" fill={loved ? "currentColor" : "none"} />
+          </button>
+        ) : null}
       </h1>
       <p className="mt-1 truncate text-center text-[14px] text-muted">{[artist, album].filter(Boolean).join(" · ") || (track ? "\u00a0" : t("player_empty_hint"))}</p>
       {player.error ? <p className="mt-2 text-center text-[14px] text-danger">{t(player.error === "missing" ? "player_missing" : "player_failed")}</p> : null}
@@ -635,6 +648,7 @@ export function Player() {
         <div className="min-w-0 flex-1">
           <Scrubber value={player.muted ? 0 : player.volume} max={1} label={t("player_volume")} onChange={setVolume} />
         </div>
+        {tools}
       </div>
     </div>
   )

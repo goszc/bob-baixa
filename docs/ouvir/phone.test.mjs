@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import http from "node:http"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { chromium } from "playwright"
+import { chromium, webkit, devices } from "playwright"
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const clipPath = path.resolve(root, "../../public/preview/clip.mp4")
@@ -77,7 +77,7 @@ const site = http.createServer(async (req, res) => {
     res.end(`window.BOB_WEB = { clientId: "test.apps.googleusercontent.com", api: "http://127.0.0.1:${api.address().port}" }\n`)
     return
   }
-  const rel = decodeURIComponent(url.pathname.replace(/^\/ouvir\/?/, "") || "index.html")
+  const rel = decodeURIComponent(url.pathname.replace(/^\/bob-baixa\/ouvir\/?/, "") || "index.html")
   if (rel.startsWith("stream/")) {
     res.writeHead(404, { "content-type": "text/plain" })
     res.end("the service worker should have intercepted this")
@@ -101,37 +101,84 @@ const site = http.createServer(async (req, res) => {
 
 await new Promise((resolve) => api.listen(0, "127.0.0.1", resolve))
 await new Promise((resolve) => site.listen(0, "127.0.0.1", resolve))
-const origin = `http://127.0.0.1:${site.address().port}/ouvir/`
+const origin = `http://localhost:${site.address().port}/bob-baixa/ouvir/`
+const phone = devices["Pixel 7"]
 
-const browser = await chromium.launch({ headless: true })
-const page = await browser.newPage({ viewport: { width: 420, height: 900 } })
-await page.addInitScript(() => {
-  sessionStorage.setItem("bob-access", "test-token")
-  sessionStorage.setItem("bob-exp", String(Date.now() + 3_600_000))
+async function exercise(browser, label) {
+  const context = await browser.newContext({ ...phone })
+  const page = await context.newPage()
+  await page.addInitScript(() => {
+    localStorage.setItem("bob-access", "test-token")
+    localStorage.setItem("bob-exp", String(Date.now() + 3_600_000))
+  })
+  await page.goto(origin, { waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).waitFor({ timeout: 20_000 })
+  await page.waitForFunction(() => navigator.serviceWorker?.controller)
+  await page.locator("#version").click()
+  await page.locator("#debug").waitFor()
+  const debug = await page.locator("#debug").innerText()
+  assert.match(debug, /controlado/)
+  assert.match(debug, /token válido/)
+  await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).click()
+  if (process.env.SHOT && label === "chromium") {
+    await page.screenshot({ path: "/opt/cursor/artifacts/phone-now-playing.png", fullPage: true })
+  }
+  await page.waitForFunction(() => {
+    const audio = document.querySelector("#audio")
+    return audio && Number.isFinite(audio.duration) && audio.duration > 0
+  })
+  const cover = await page.locator("#cover").evaluate((image) => image.naturalWidth)
+  assert.ok(cover > 0, `${label}: cover did not load`)
+  await page.getByRole("button", { name: "keep coming", exact: true }).waitFor()
+  const src = await page.locator("#audio").evaluate((element) => element.currentSrc)
+  assert.match(src, /\/bob-baixa\/ouvir\/stream\/audio1/)
+  await page.getByRole("button", { name: "Disappeared Completely — No Place for Me" }).click()
+  const canVideo = await page.evaluate(() => document.createElement("video").canPlayType('video/mp4; codecs="avc1.42E01E"'))
+  if (canVideo) {
+    await page.waitForFunction(() => {
+      const video = document.querySelector("#video")
+      return video && !video.hidden && video.videoWidth > 0
+    })
+  } else {
+    await page.locator("#debug").waitFor()
+    assert.match(await page.locator("#debug").innerText(), /206|200/)
+  }
+  await page.locator("#search").fill("broken")
+  await page.getByRole("button", { name: "broken", exact: true }).click()
+  await page.locator("#err").getByText(/recusou a faixa \(403\)|não consegui tocar/).waitFor()
+  const kept = await page.evaluate(() => localStorage.getItem("bob-access"))
+  assert.equal(kept, "test-token")
+  await context.close()
+  console.log(`${label} played a ranged drive stream on /bob-baixa/ouvir/`)
+}
+
+const chromiumBrowser = await chromium.launch({ headless: true })
+await exercise(chromiumBrowser, "chromium")
+const again = await chromiumBrowser.newContext({ ...phone })
+const quiet = await again.newPage()
+await quiet.addInitScript(() => {
+  localStorage.setItem("bob-access", "test-token")
+  localStorage.setItem("bob-exp", String(Date.now() + 3_600_000))
 })
-await page.goto(origin, { waitUntil: "networkidle" })
-await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).waitFor()
-await page.waitForFunction(() => navigator.serviceWorker?.controller)
-await page.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).click()
-await page.waitForFunction(() => {
-  const audio = document.querySelector("#audio")
-  return audio && Number.isFinite(audio.duration) && audio.duration > 0
-})
-const cover = await page.locator("#cover").evaluate((image) => image.naturalWidth)
-assert.ok(cover > 0, "cover did not load")
-await page.getByRole("button", { name: "keep coming", exact: true }).waitFor()
+await quiet.route("https://accounts.google.com/**", (route) => route.abort())
+await quiet.goto(origin, { waitUntil: "domcontentloaded" })
+await quiet.getByRole("button", { name: "Low Roar — I'll Keep Coming" }).waitFor({ timeout: 20_000 })
+assert.equal(await quiet.locator("#gate").isHidden(), true)
+await again.close()
+await chromiumBrowser.close()
+
+let webkitBrowser = null
+try {
+  webkitBrowser = await webkit.launch({ headless: true })
+  await exercise(webkitBrowser, "webkit")
+  await webkitBrowser.close()
+} catch (error) {
+  console.error(`webkit failed: ${error instanceof Error ? error.stack || error.message : error}`)
+  if (webkitBrowser) await webkitBrowser.close()
+  throw error
+}
+
 assert.ok(ranges.some((range) => range.startsWith("bytes=")), `expected a range request, got ${ranges.join(",")}`)
-const src = await page.locator("#audio").evaluate((element) => element.currentSrc)
-assert.match(src, /\/stream\/audio1/)
-await page.getByRole("button", { name: "Disappeared Completely — No Place for Me" }).click()
-await page.waitForFunction(() => {
-  const video = document.querySelector("#video")
-  return video && !video.hidden && video.videoWidth > 0
-})
-await page.locator("#search").fill("broken")
-await page.getByRole("button", { name: "broken", exact: true }).click()
-await page.getByText(/recusou a faixa \(403\)|não consegui tocar/).waitFor()
-await browser.close()
 site.close()
 api.close()
 console.log("phone played a ranged drive stream, cover, lyrics and video")
@@ -142,6 +189,11 @@ function sendRange(req, res, bytes, type) {
   if (header) ranges.push(header)
   const match = /^bytes=(\d+)-(\d*)$/i.exec(header)
   if (!match) {
+    res.writeHead(200, { ...cors(), "content-type": type, "content-length": total, "accept-ranges": "bytes" })
+    res.end(bytes)
+    return
+  }
+  if (header === "bytes=0-1") {
     res.writeHead(200, { ...cors(), "content-type": type, "content-length": total, "accept-ranges": "bytes" })
     res.end(bytes)
     return

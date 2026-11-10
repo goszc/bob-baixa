@@ -22,6 +22,14 @@ test("a drive 206 stays a ranged response without reading the whole body", () =>
   assert.equal(init.headers.get("Accept-Ranges"), "bytes")
 })
 
+test("a drive 200 for a range still advertises 206 with the exact byte length", () => {
+  const init = mediaResponseInit(200, new Headers({ "content-type": "audio/mp4", "content-length": "4000" }), "bytes=0-1", 4000)
+  assert.equal(init.status, 206)
+  assert.equal(init.headers.get("Content-Range"), "bytes 0-1/4000")
+  assert.equal(init.headers.get("Content-Length"), "2")
+  assert.equal(init.headers.get("Accept-Ranges"), "bytes")
+})
+
 test("a missing content-range is rebuilt from the request and the known size", () => {
   const parsed = parseByteRange("bytes=100-", 4000)
   assert.deepEqual(parsed, { start: 100, end: 3999 })

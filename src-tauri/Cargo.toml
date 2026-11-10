@@ -1,6 +1,6 @@
 [package]
 name = "bob-baixa"
-version = "0.6.4"
+version = "0.6.5"
 edition = "2021"
 publish = false
 description = "bob baixa"
@@ -40,6 +40,8 @@ minisign-verify = "0.3"
 base64 = "0.22"
 sha2 = "0.10"
 getrandom = "0.2"
+tauri-plugin-updater = "2.14.1"
+url = "2.5.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

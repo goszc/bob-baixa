@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { DRIVE_SCOPE, activeLyric, choosePlayback, libraryFromFiles, libraryQuery, lyricLines, mergeLibrary } from "./library.js"
+import { DRIVE_SCOPE, activeLyric, choosePlayback, libraryFromFiles, libraryQuery, lyricLines, mergeLibrary, mergePhoneState } from "./library.js"
 
 test("the phone asks only for files this project created", () => {
   assert.equal(DRIVE_SCOPE, "https://www.googleapis.com/auth/drive.file")
@@ -51,6 +51,16 @@ test("the phone index fills title, cover and synced lyrics the file list does no
   const lines = lyricLines(merged[0].lyrics)
   assert.equal(lines[0].text, "I'll keep coming")
   assert.equal(activeLyric(lines, 12), 0)
+})
+
+test("likes and playlists merge without dropping either side", () => {
+  const merged = mergePhoneState(
+    { updatedAt: 10, likes: ["a"], playlists: [{ name: "Noite", paths: ["a"] }], queue: ["a"] },
+    { updatedAt: 20, likes: ["b"], playlists: [{ name: "noite", paths: ["b"] }], queue: ["b"] },
+  )
+  assert.deepEqual(merged.likes.sort(), ["a", "b"])
+  assert.deepEqual(merged.playlists[0].paths.sort(), ["a", "b"])
+  assert.deepEqual(merged.queue, ["b"])
 })
 
 test("ios uses an m4a of the same song and otherwise explains opus", () => {

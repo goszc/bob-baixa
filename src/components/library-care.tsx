@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { invoke, isTauri, listenBob } from "../lib/api"
+import { duplicatePairs } from "../lib/duplicates"
 import { dailyMix } from "../lib/mix"
 import { useMusic } from "../lib/music"
 import { playTracks } from "../lib/player"
@@ -16,9 +17,31 @@ interface Spot {
   at: number
 }
 
+interface DupCopy {
+  path: string
+  format: string
+  bitrate: number
+  size: number
+  lyrics: boolean
+  cover: boolean
+}
+
 interface Issues {
-  duplicates: { reason: string; paths: string[] }[]
+  duplicates: { reason: string; paths: string[]; copies?: DupCopy[]; worse?: string }[]
   broken: string[]
+}
+
+function shownDuplicates(issues: Issues | null, tracks: Track[]) {
+  const scanned = (issues?.duplicates ?? []).map((group) => ({
+    reason: group.reason,
+    worse: group.worse ?? "",
+    copies: group.copies ?? group.paths.map((path) => ({ path, format: "", bitrate: 0, size: 0, lyrics: false, cover: false })),
+  }))
+  const known = new Set(scanned.flatMap((group) => group.copies.map((copy) => copy.path)))
+  const extra = duplicatePairs(tracks)
+    .filter((pair) => pair.copies.some((copy) => !known.has(copy.path)))
+    .map((pair) => ({ reason: pair.reason, worse: pair.worse, copies: pair.copies.map((copy) => ({ ...copy, lyrics: false })) }))
+  return [...scanned, ...extra]
 }
 
 interface TagPreview {
@@ -145,14 +168,27 @@ export function CarePanel({ tracks }: { tracks: Track[] }) {
           <Button className="mb-3" onClick={() => void loadIssues()}>
             {t("search_btn")}
           </Button>
-          {issues?.duplicates.map((group) => (
-            <div key={group.paths.join("|")} className="mb-3 rounded-xl border border-line p-3 text-[13px]">
+          {shownDuplicates(issues, tracks).map((group) => (
+            <div key={group.copies.map((copy) => copy.path).join("|")} className="mb-3 rounded-xl border border-line p-3 text-[13px]">
               <div className="mb-1 text-muted">{group.reason}</div>
-              {group.paths.map((path) => (
-                <div key={path} className="truncate">
-                  {path}
+              {group.copies.map((copy) => (
+                <div key={copy.path} className="truncate">
+                  {copy.path}
+                  {copy.format ? ` · ${copy.format}` : ""}
+                  {copy.bitrate ? ` · ${Math.round(copy.bitrate / 1000)} kbps` : ""}
+                  {copy.lyrics ? " · letra" : ""}
+                  {copy.cover ? " · capa" : ""}
                 </div>
               ))}
+              {group.worse ? (
+                <button
+                  type="button"
+                  className="mt-2 text-muted hover:text-ink"
+                  onClick={() => void invoke("trash_copy", { path: group.worse }).then(() => void loadIssues())}
+                >
+                  {t("care_trash_worse")}
+                </button>
+              ) : null}
             </div>
           ))}
           {issues?.broken.length ? <p className="mb-2 text-[13px]">{t("care_broken")}</p> : null}

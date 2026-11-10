@@ -49,6 +49,24 @@ ShowUninstDetails show
 !insertmacro MUI_LANGUAGE "PortugueseBR"
 !insertmacro MUI_LANGUAGE "English"
 
+Var RestartAfter
+
+Function .onInit
+  StrCpy $RestartAfter "0"
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/R" $1
+  IfErrors restart_done
+    StrCpy $RestartAfter "1"
+  restart_done:
+FunctionEnd
+
+Function .onInstSuccess
+  StrCmp $RestartAfter "1" 0 no_restart
+    Exec '"$INSTDIR\bob-baixa.exe"'
+  no_restart:
+FunctionEnd
+
 Section "bob baixa" SecApp
   SectionIn RO
   SetOutPath "$INSTDIR"
@@ -70,7 +88,7 @@ Section "bob baixa" SecApp
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "UninstallString" "$\"$INSTDIR\Uninstall.exe$\""
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "DisplayIcon" "$INSTDIR\bob-baixa.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "Publisher" "bob baixa"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "DisplayVersion" "0.6.4"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "DisplayVersion" "0.6.5"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\bob baixa" "NoRepair" 1
   WriteRegStr HKCU "Software\bob baixa" "InstallDir" "$INSTDIR"

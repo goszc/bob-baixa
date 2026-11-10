@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use bob_core::{cleaned_title, meaning_text, radio_score, suggestions_from_json, top_artists};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tauri::Manager;
 #[derive(Default, Serialize, Deserialize)]
 struct Pins {
     #[serde(default)]
@@ -110,23 +111,136 @@ pub async fn warm_next(paths: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn list_trash() -> Result<Vec<TrashItem>, String> {
-    let rows = tokio::task::spawn_blocking(crate::drive::trashed).await.map_err(|error| error.to_string())??;
-    Ok(rows.into_iter().map(|(id, name, title)| TrashItem { id, name, title }).collect())
+pub async fn list_trash(app: tauri::AppHandle) -> Result<Vec<TrashItem>, String> {
+    let mut rows = tokio::task::spawn_blocking(crate::drive::trashed)
+        .await
+        .map_err(|error| error.to_string())
+        .unwrap_or_else(|error| Err(error))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, name, title)| TrashItem { id, name, title })
+        .collect::<Vec<_>>();
+    rows.extend(local_trash(&app_data(&app)));
+    Ok(rows)
 }
 
 #[tauri::command]
-pub async fn restore_trash(id: String) -> Result<(), String> {
+pub async fn restore_trash(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    if let Some(local) = id.strip_prefix("local-") {
+        return restore_local(&app_data(&app), local);
+    }
     tokio::task::spawn_blocking(move || crate::drive::set_trashed(&id, false))
         .await
         .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub async fn purge_trash(id: String) -> Result<(), String> {
+pub async fn purge_trash(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    if let Some(local) = id.strip_prefix("local-") {
+        let dir = app_data(&app).join("trash").join(local);
+        std::fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
+        return Ok(());
+    }
     tokio::task::spawn_blocking(move || crate::drive::purge(&id))
         .await
         .map_err(|error| error.to_string())?
+}
+
+/// Moves the worse copy into the local trash, or the Drive trash. Restore puts it back.
+#[tauri::command]
+pub async fn trash_copy(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    if let Some(id) = path.strip_prefix("drive:") {
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || crate::drive::set_trashed(&id, true))
+            .await
+            .map_err(|error| error.to_string())??;
+        return Ok(path);
+    }
+    let file = PathBuf::from(&path);
+    let root = output_root(&app);
+    if root.as_os_str().is_empty() || !file.starts_with(&root) || !file.is_file() {
+        return Err("só mando para a lixeira um arquivo da biblioteca.".into());
+    }
+    let id = format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value| value.as_millis()).unwrap_or(0));
+    let folder = app_data(&app).join("trash").join(&id);
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    let name = file.file_name().map(|value| value.to_string_lossy().to_string()).unwrap_or_else(|| "faixa".into());
+    let dest = folder.join(&name);
+    if dest.exists() {
+        return Err("a lixeira já tem esse arquivo.".into());
+    }
+    move_file(&file, &dest)?;
+    let meta = serde_json::to_string(&TrashMeta { from: path, name: name.clone() }).map_err(|error| error.to_string())?;
+    std::fs::write(folder.join("meta.json"), meta).map_err(|error| error.to_string())?;
+    Ok(format!("local-{id}"))
+}
+
+#[derive(Serialize, Deserialize)]
+struct TrashMeta {
+    from: String,
+    name: String,
+}
+
+fn app_data(app: &tauri::AppHandle) -> PathBuf {
+    app.state::<crate::runtime::AppState>()
+        .inner
+        .try_lock()
+        .ok()
+        .map(|inner| inner.data_dir.clone())
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| std::env::temp_dir().join("bob-baixa"))
+}
+
+fn output_root(app: &tauri::AppHandle) -> PathBuf {
+    app.state::<crate::runtime::AppState>()
+        .inner
+        .try_lock()
+        .ok()
+        .map(|inner| PathBuf::from(&inner.config.output_dir))
+        .unwrap_or_default()
+}
+
+fn local_trash(dir: &Path) -> Vec<TrashItem> {
+    let root = dir.join("trash");
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let meta: TrashMeta = serde_json::from_str(&std::fs::read_to_string(entry.path().join("meta.json")).ok()?).ok()?;
+            Some(TrashItem {
+                id: format!("local-{}", entry.file_name().to_string_lossy()),
+                name: meta.name,
+                title: meta.from,
+            })
+        })
+        .collect()
+}
+
+fn restore_local(dir: &Path, id: &str) -> Result<(), String> {
+    let folder = dir.join("trash").join(id);
+    let meta: TrashMeta = serde_json::from_str(&std::fs::read_to_string(folder.join("meta.json")).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    let src = folder.join(&meta.name);
+    let dest = PathBuf::from(&meta.from);
+    if dest.exists() {
+        return Err("já existe um arquivo nesse lugar.".into());
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    move_file(&src, &dest)?;
+    let _ = std::fs::remove_dir_all(folder);
+    Ok(())
+}
+
+fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(from, to).map_err(|error| error.to_string())?;
+    std::fs::remove_file(from).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

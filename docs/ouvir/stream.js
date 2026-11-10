@@ -46,12 +46,23 @@ export function mediaResponseInit(upstreamStatus, upstreamHeaders, requestRange,
       if (parsed) headers.set("Content-Range", `bytes ${parsed.start}-${parsed.end}/${size}`)
     }
   }
-  if (exposedLength) headers.set("Content-Length", exposedLength)
-  else if (status === 206 && headers.has("Content-Range")) {
+  if (status === 200 && requestRange && size > 0) {
     const parsed = parseByteRange(requestRange, size)
-    if (parsed) headers.set("Content-Length", String(parsed.end - parsed.start + 1))
+    if (parsed) {
+      status = 206
+      headers.set("Content-Range", `bytes ${parsed.start}-${parsed.end}/${size}`)
+    }
+  }
+  const rangeHeader = headers.get("Content-Range")
+  const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/i.exec(rangeHeader || "")
+  if (match) {
+    status = 206
+    headers.set("Content-Length", String(Number(match[2]) - Number(match[1]) + 1))
+  } else if (exposedLength) {
+    headers.set("Content-Length", exposedLength)
   } else if (status === 200 && size > 0) {
     headers.set("Content-Length", String(size))
   }
+  headers.set("Accept-Ranges", "bytes")
   return { status, headers }
 }

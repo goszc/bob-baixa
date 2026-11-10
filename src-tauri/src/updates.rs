@@ -5,34 +5,15 @@ use base64::Engine;
 
 use crate::hidden::tokio_command;
 use bob_core::{text, BobEvent, Config};
-use minisign_verify::{PublicKey, Signature};
-use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::AsyncWriteExt;
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::runtime::{self, AppState};
 
+#[cfg(test)]
 const PUBKEY: &str = include_str!("../../packaging/updater.pub");
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CHECK_EVERY: Duration = Duration::from_secs(3 * 60 * 60);
-
-#[derive(Deserialize)]
-struct Manifest {
-    version: String,
-    platforms: Platforms,
-}
-
-#[derive(Deserialize)]
-struct Platforms {
-    #[serde(rename = "windows-x86_64")]
-    windows: Option<PlatformFile>,
-}
-
-#[derive(Deserialize)]
-struct PlatformFile {
-    signature: String,
-    url: String,
-}
 
 pub async fn startup(app: &AppHandle) {
     let auto = {
@@ -104,39 +85,14 @@ async fn run_checks(app: &AppHandle, manual: bool) -> Result<(), String> {
 }
 
 pub async fn apply_update(app: &AppHandle) -> Result<(), String> {
-    let path = {
-        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
-        inner
-            .pending_installer
-            .clone()
-            .ok_or_else(|| "sem instalador".to_string())?
+    let Some(update) = pending_update(app).await? else {
+        return Err("sem atualização".into());
     };
-    launch_installer(&path)?;
-    app.exit(0);
-    Ok(())
-}
-
-fn launch_installer(path: &std::path::Path) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        let script = format!(
-            "ping 127.0.0.1 -n 4 >nul & start \"\" \"{}\" /S",
-            path.display()
-        );
-        crate::hidden::std_command("cmd")
-            .args(["/C", &script])
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-    #[cfg(not(windows))]
-    {
-        tokio_command(path)
-            .arg("/S")
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| error.to_string())?;
+    app.restart()
 }
 
 pub async fn refresh_ytdlp(app: &AppHandle) -> Result<(), String> {
@@ -228,77 +184,39 @@ async fn refresh_ffmpeg(app: &AppHandle) -> Result<bool, String> {
 }
 
 async fn check_app(app: &AppHandle) -> Result<bool, String> {
-    let endpoint = {
-        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
-        endpoint(&inner.config)
-    };
-    if endpoint.is_empty() {
-        return Ok(false);
-    }
-    let client = client()?;
-    let response = client
-        .get(&endpoint)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Ok(false);
-    }
-    let manifest: Manifest =
-        serde_json::from_slice(&response.bytes().await.map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?;
-    if !newer(&manifest.version, APP_VERSION) {
-        return Ok(false);
-    }
-    let Some(file) = manifest.platforms.windows else {
+    let Some(update) = pending_update(app).await? else {
         return Ok(false);
     };
-    let bytes = client
-        .get(&file.url)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?
-        .bytes()
-        .await
-        .map_err(|error| error.to_string())?;
-    verify(&bytes, &file.signature)?;
-    let dir = {
-        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
-        inner.data_dir.join("updates")
-    };
-    let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join("bob-baixa-setup.exe");
-    let mut out = tokio::fs::File::create(&path)
-        .await
-        .map_err(|error| error.to_string())?;
-    out.write_all(&bytes)
-        .await
-        .map_err(|error| error.to_string())?;
-    {
-        let mut inner = app.state::<AppState>().inner.clone().lock_owned().await;
-        inner.pending_installer = Some(path);
-    }
     let _ = app.emit(
         "bob",
         BobEvent::Update {
-            version: manifest.version,
+            version: update.version.clone(),
         },
     );
     Ok(true)
 }
 
-fn verify(bytes: &[u8], signature: &str) -> Result<(), String> {
-    let key = PublicKey::decode(&minisign_text(PUBKEY)?).map_err(|error| error.to_string())?;
-    let signature =
-        Signature::decode(&minisign_text(signature)?).map_err(|error| error.to_string())?;
-    key.verify(bytes, &signature, false)
-        .map_err(|error| error.to_string())
+async fn pending_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    let endpoint = {
+        let inner = app.state::<AppState>().inner.clone().lock_owned().await;
+        endpoint(&inner.config)
+    };
+    if endpoint.is_empty() {
+        return Ok(None);
+    }
+    let url = url::Url::parse(&endpoint).map_err(|error| error.to_string())?;
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![url])
+        .map_err(|error| error.to_string())?
+        .build()
+        .map_err(|error| error.to_string())?;
+    updater.check().await.map_err(|error| error.to_string())
 }
 
 /// Tauri stores the minisign public key and the signature as one base64 line.
 /// `minisign-verify` wants the decoded text, with its comment lines.
+#[cfg(test)]
 fn minisign_text(value: &str) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.lines().nth(1).is_some() {
@@ -324,30 +242,13 @@ fn endpoint(config: &Config) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use minisign_verify::PublicKey;
 
     #[test]
     fn public_key_decodes() {
         let text = minisign_text(PUBKEY).expect("public key text");
         PublicKey::decode(&text).expect("public key");
     }
-}
-
-fn newer(remote: &str, current: &str) -> bool {
-    fn parts(value: &str) -> Vec<u64> {
-        value
-            .trim()
-            .trim_start_matches('v')
-            .split(['.', '-'])
-            .map(|part| {
-                part.chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect::<String>()
-                    .parse()
-                    .unwrap_or(0)
-            })
-            .collect()
-    }
-    parts(remote) > parts(current)
 }
 
 fn client() -> Result<reqwest::Client, String> {

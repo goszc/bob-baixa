@@ -66,6 +66,7 @@ export interface AppState {
   expandedJob: string | null
   dragging: boolean
   updateOffer: boolean
+  updateVersion: string
   whatsNew: boolean
   showNotes: boolean
   releaseNotes: string
@@ -114,6 +115,7 @@ function emptyState(): AppState {
     expandedJob: null,
     dragging: false,
     updateOffer: false,
+    updateVersion: "",
     whatsNew: false,
     showNotes: false,
     releaseNotes: "",
@@ -910,7 +912,7 @@ export function openNotes() {
 
 export async function dismissNotes() {
   const ack = getState().whatsNew
-  const version = getState().tools.appVersion || "0.6.4"
+  const version = getState().tools.appVersion || "0.6.5"
   setState((current) => ({
     ...current,
     showNotes: false,
@@ -1088,7 +1090,7 @@ function applyEvent(event: BobEvent) {
     toastTimer = window.setTimeout(() => setState({ toast: null }), 2400)
   } else if (event.type === "convert") setState({ convertJob: event.job, busy: event.job.state === "running" ? "convert" : null })
   else if (event.type === "schedule") setState({ scheduleAt: event.at })
-  else if (event.type === "update") setState({ updateOffer: true, busy: null })
+  else if (event.type === "update") setState({ updateOffer: true, updateVersion: event.version, busy: null })
   else if (event.type === "ready" && getState().config.queueNewDownloads) {
     const track: Track = {
       id: event.path,
