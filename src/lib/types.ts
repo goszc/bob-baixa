@@ -240,7 +240,7 @@ export interface EnqueueItem {
 
 export const defaultConfig: Config = {
   language: "pt",
-  theme: "system",
+  theme: "dark",
   themeGlass: false,
   outputDir: "",
   filenameTemplate: "%(title)s [%(id)s].%(ext)s",

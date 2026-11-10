@@ -1,5 +1,13 @@
 # changelog
 
+## 0.6.4
+
+- o player ficou uma tela só: capa ou vídeo na proporção da faixa, uma fileira de ícones, busca e a lista. a biblioteca, a fila e a letra dividem o painel da direita
+- a lista de faixas voltou a aparecer. ela ocupava altura zero entre os botões e os controles, e uma biblioteca só do drive nem era montada. agora ela rola, mesmo com centenas de faixas
+- mix do dia, curtidas, recentes, retrospectiva, cuidados e pastas ficam no menu mais. crossfade, volume nivelado, timer e descobrir ficam no ícone de ajustes. a fila por frase abre no ícone de brilho
+- o tema escuro é o padrão. o claro continua nas configurações
+- o mini player é uma janela própria, sempre por cima, fora da janela principal. o arraste pega o fundo, não os botões. o tamanho tem faixa e quadrado, e a opacidade fica no clique direito
+
 ## 0.6.3
 
 - no celular, a faixa toca por uma URL da própria página. o service worker põe o `Authorization` e repassa o `Range`, então o áudio e o vídeo começam sem baixar o arquivo inteiro. sem o service worker, a página baixa a faixa e avisa

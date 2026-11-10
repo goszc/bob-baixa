@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
+import { Heart, Pause, PictureInPicture2, Play, SkipBack, SkipForward, Square } from "lucide-react"
 import { isTauri } from "../lib/api"
 import { initApp } from "../store"
 
@@ -17,12 +18,12 @@ interface MiniState {
 const empty: MiniState = { title: "", artist: "", cover: "", line: "", playing: false, currentTime: 0, duration: 0 }
 
 const sample: MiniState = {
-  title: "Noite acesa no meio da cidade",
-  artist: "Banda Demo",
+  title: "I'll Keep Coming",
+  artist: "Low Roar",
   cover: "",
-  line: "Som que me leva",
+  line: "",
   playing: true,
-  currentTime: 12,
+  currentTime: 42,
   duration: 180,
   liked: true,
 }
@@ -31,13 +32,19 @@ type Size = "strip" | "square"
 
 export function MiniPlayer() {
   const demo = !isTauri()
+  const params = new URLSearchParams(window.location.search)
   const [state, setState] = useState<MiniState>(demo ? sample : empty)
-  const [size, setSize] = useState<Size>(() => (localStorage.getItem("bob-mini-size") === "square" ? "square" : "strip"))
+  const [size, setSize] = useState<Size>(() => (params.get("size") === "square" || localStorage.getItem("bob-mini-size") === "square" ? "square" : "strip"))
   const [opacity, setOpacity] = useState(() => {
     const raw = Number(localStorage.getItem("bob-mini-opacity") || "1")
-    return Number.isFinite(raw) ? Math.min(1, Math.max(0.45, raw)) : 1
+    return raw === 0.7 || raw === 0.85 ? raw : 1
   })
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   useEffect(() => {
+    const root = document.documentElement
+    root.classList.add("dark")
+    root.style.background = "transparent"
+    document.body.style.background = "transparent"
     initApp()
     if (!isTauri()) return
     let stop = () => {}
@@ -60,95 +67,108 @@ export function MiniPlayer() {
     void resize(size)
   }, [size])
   const progress = state.duration > 0 ? Math.min(100, (state.currentTime / state.duration) * 100) : 0
+  const title = state.title || "bob baixa"
+  const subtitle = state.buffering ? "carregando…" : state.line || state.artist
+
   return (
     <div
-      className="flex h-screen flex-col overflow-hidden rounded-2xl bg-canvas/90 text-ink"
+      className="relative h-screen overflow-hidden rounded-2xl bg-[#161616] text-[#f3f3f1]"
       style={{ opacity }}
-      data-tauri-drag-region
+      onContextMenu={(event) => {
+        event.preventDefault()
+        setMenu({ x: event.clientX, y: event.clientY })
+      }}
+      onClick={() => setMenu(null)}
     >
-      <div className={size === "square" ? "flex min-h-0 flex-1 flex-col gap-2 p-3" : "flex min-h-0 flex-1 items-center gap-3 px-3"} data-tauri-drag-region>
-        <div className={size === "square" ? "aspect-square w-full overflow-hidden rounded-xl bg-soft" : "h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-soft"}>
-          {state.cover ? <img src={state.cover} alt="" className="h-full w-full object-cover" /> : <div className="h-full w-full bg-[var(--player-accent,#2a2a28)]" />}
+      <div data-tauri-drag-region className="absolute inset-0" />
+      <div className={size === "square" ? "pointer-events-none relative flex h-full flex-col gap-3 p-3 pb-16" : "pointer-events-none relative flex h-full items-center gap-3 px-3 pb-3"}>
+        <div className={size === "square" ? "min-h-0 w-full flex-1 overflow-hidden rounded-xl bg-[#222]" : "h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-[#222]"}>
+          {state.cover ? <img src={state.cover} alt="" className="h-full w-full object-cover" /> : <div className="h-full w-full bg-[#2a2a28]" />}
         </div>
-        <div className="min-w-0 flex-1" data-tauri-drag-region>
-          <p className="marquee text-[14px] font-medium">
-            <span>{state.title || "bob baixa"}</span>
-          </p>
-          <p className="truncate text-[12px] text-muted">{state.buffering ? "carregando…" : state.line || state.artist}</p>
+        <div className={size === "square" ? "min-w-0" : "min-w-0 flex-1 pr-[200px]"}>
+          <p className="truncate text-[14px] font-medium">{title}</p>
+          <p className="truncate text-[12px] text-[#9c9c98]">{subtitle}</p>
         </div>
-        {size === "strip" ? <Controls state={state} /> : null}
       </div>
-      {size === "square" ? (
-        <div className="flex items-center justify-between px-3 pb-1">
-          <Controls state={state} />
-        </div>
-      ) : null}
+      <div className={size === "square" ? "absolute right-3 bottom-4 left-3 z-10 flex items-center justify-between" : "absolute top-1/2 right-2 z-10 flex -translate-y-1/2 items-center"}>
+        <MiniButton action="previous" label="anterior">
+          <SkipBack className="h-4 w-4" />
+        </MiniButton>
+        <MiniButton action="toggle" label={state.playing ? "pausar" : "tocar"}>
+          {state.playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+        </MiniButton>
+        <MiniButton action="next" label="próxima">
+          <SkipForward className="h-4 w-4" />
+        </MiniButton>
+        <MiniButton action="like" label={state.liked ? "descurtir" : "curtir"}>
+          <Heart className="h-4 w-4" fill={state.liked ? "currentColor" : "none"} />
+        </MiniButton>
+        <MiniButton action="expand" label="abrir">
+          <PictureInPicture2 className="h-4 w-4" />
+        </MiniButton>
+        <MiniButton action="size" label={size === "strip" ? "quadrado" : "faixa"} onClick={() => setSize((value) => (value === "strip" ? "square" : "strip"))}>
+          <Square className="h-4 w-4" />
+        </MiniButton>
+      </div>
       <button
         type="button"
         aria-label="posição"
-        className="mx-3 mb-2 h-1 overflow-hidden rounded-full bg-soft"
+        className="absolute right-3 bottom-1.5 left-3 z-10 h-1 overflow-hidden rounded-full bg-white/15"
         onClick={(event) => {
+          event.stopPropagation()
           const rect = event.currentTarget.getBoundingClientRect()
           const ratio = (event.clientX - rect.left) / rect.width
           void send(`seek:${Math.max(0, ratio * (state.duration || 0))}`)
         }}
       >
-        <span className="block h-full bg-ink" style={{ width: `${progress}%` }} />
+        <span className="block h-full bg-white" style={{ width: `${progress}%` }} />
       </button>
-      <div className="flex items-center gap-2 px-3 pb-2 text-[11px] text-muted">
-        <button type="button" className="rounded-full bg-soft px-2 py-0.5" onClick={() => setSize((value) => (value === "strip" ? "square" : "strip"))}>
-          {size === "strip" ? "quadrado" : "faixa"}
-        </button>
-        <label className="flex items-center gap-1">
-          opacidade
-          <input
-            aria-label="opacidade"
-            type="range"
-            min={0.45}
-            max={1}
-            step={0.05}
-            value={opacity}
-            onChange={(event) => {
-              const next = Number(event.target.value)
-              setOpacity(next)
-              localStorage.setItem("bob-mini-opacity", String(next))
+      {menu ? (
+        <div className="absolute z-20 min-w-36 rounded-xl border border-white/10 bg-[#1c1c1c] p-1 text-[13px] shadow-lg" style={{ left: Math.min(menu.x, 280), top: Math.min(menu.y, 48) }}>
+          {[1, 0.85, 0.7].map((value) => (
+            <button
+              key={value}
+              type="button"
+              className="block w-full rounded-lg px-3 py-1.5 text-left hover:bg-white/10"
+              onClick={(event) => {
+                event.stopPropagation()
+                setOpacity(value)
+                localStorage.setItem("bob-mini-opacity", String(value))
+                setMenu(null)
+              }}
+            >
+              {value === 1 ? "opacidade 100%" : value === 0.85 ? "opacidade 85%" : "opacidade 70%"}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="block w-full rounded-lg px-3 py-1.5 text-left hover:bg-white/10"
+            onClick={(event) => {
+              event.stopPropagation()
+              void closeMini()
             }}
-          />
-        </label>
-        <button type="button" className="ml-auto" aria-label="fechar" onClick={() => void closeMini()}>
-          fechar
-        </button>
-      </div>
-      <style>{`.marquee{overflow:hidden;white-space:nowrap}.marquee span{display:inline-block;animation:bob-marquee 14s ease-in-out infinite}@keyframes bob-marquee{0%,18%{transform:translateX(0)}82%,100%{transform:translateX(-40%)}}`}</style>
+          >
+            fechar
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
 
-function Controls({ state }: { state: MiniState }) {
+function MiniButton({ action, label, children, onClick }: { action: string; label: string; children: ReactNode; onClick?: () => void }) {
   return (
-    <div className="flex items-center gap-1">
-      <MiniButton action="previous" label="anterior">
-        ‹
-      </MiniButton>
-      <MiniButton action="toggle" label={state.playing ? "pausar" : "tocar"}>
-        {state.playing ? "❚❚" : "▶"}
-      </MiniButton>
-      <MiniButton action="next" label="próxima">
-        ›
-      </MiniButton>
-      <MiniButton action="like" label={state.liked ? "descurtir" : "curtir"}>
-        {state.liked ? "♥" : "♡"}
-      </MiniButton>
-      <MiniButton action="expand" label="abrir">
-        ↗
-      </MiniButton>
-    </div>
-  )
-}
-
-function MiniButton({ action, label, children }: { action: string; label: string; children: string }) {
-  return (
-    <button type="button" aria-label={label} title={label} className="h-8 w-8 rounded-full text-[14px] hover:bg-soft" onClick={() => void send(action)}>
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className="grid h-8 w-8 place-items-center rounded-full text-[#f3f3f1] hover:bg-white/10"
+      onClick={(event) => {
+        event.stopPropagation()
+        if (onClick) onClick()
+        else void send(action)
+      }}
+    >
       {children}
     </button>
   )
@@ -171,7 +191,7 @@ async function resize(size: Size) {
   const { getCurrentWindow } = await import("@tauri-apps/api/window")
   const { LogicalSize } = await import("@tauri-apps/api/dpi")
   const window = getCurrentWindow()
-  await window.setSize(size === "square" ? new LogicalSize(300, 360) : new LogicalSize(460, 120))
+  await window.setSize(size === "square" ? new LogicalSize(280, 340) : new LogicalSize(440, 88))
 }
 
 async function rememberWindow() {
