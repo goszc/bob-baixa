@@ -32,6 +32,7 @@ export interface MediaInspect {
   duration?: number | null
   src: string
   cover?: string
+  gain?: number
 }
 
 export interface PlayerMeta {
@@ -135,6 +136,10 @@ let slotB = false
 let wired = false
 let audioCtx: AudioContext | null = null
 let gainA: GainNode | null = null
+let trimA: GainNode | null = null
+let trimB: GainNode | null = null
+let sleepFading = false
+let miniAt = 0
 let gainB: GainNode | null = null
 let master: GainNode | null = null
 let compressor: DynamicsCompressorNode | null = null
@@ -154,6 +159,7 @@ function emit() {
 function setPlayer(patch: Partial<PlayerState>) {
   player = { ...player, ...patch }
   emit()
+  publishMini()
   publishSession()
   const track = currentTrack()
   if (track) {
@@ -238,6 +244,33 @@ function idleAudio() {
   return slotB ? audio : audioAlt
 }
 
+function setTrim(element: HTMLMediaElement, db: number) {
+  const trim = element === audioAlt ? trimB : trimA
+  if (!trim || !audioCtx) return
+  const linear = 10 ** (Math.max(-24, Math.min(12, db)) / 20)
+  trim.gain.setValueAtTime(linear, audioCtx.currentTime)
+}
+
+function publishMini() {
+  if (!isTauri()) return
+  const now = Date.now()
+  if (now - miniAt < 400) return
+  miniAt = now
+  const track = currentTrack()
+  const line = player.lyrics?.lines.filter((item) => item.at <= player.currentTime + 0.2).at(-1)?.text ?? ""
+  void import("@tauri-apps/api/event").then(({ emit }) =>
+    emit("mini-state", {
+      title: displayTitle() || track?.title || "",
+      artist: displayArtist() || track?.artist || "",
+      cover: track?.thumbnail || "",
+      line,
+      playing: player.playing,
+      currentTime: player.currentTime,
+      duration: player.duration,
+    }),
+  )
+}
+
 function applyVolume() {
   const level = player.muted ? 0 : player.volume
   if (video) video.volume = level
@@ -274,10 +307,14 @@ function ensureGraph() {
   compressor.ratio.value = 2
   compressor.attack.value = 0.02
   compressor.release.value = 0.25
+  trimA = ctx.createGain()
+  trimB = ctx.createGain()
   sourceA.connect(gainA)
   sourceB.connect(gainB)
-  gainA.connect(master)
-  gainB.connect(master)
+  gainA.connect(trimA)
+  gainB.connect(trimB)
+  trimA.connect(master)
+  trimB.connect(master)
   audioCtx = ctx
   wired = true
   routeMaster()
@@ -412,12 +449,22 @@ function startLoop() {
       lastTick = now
       const duration = Number.isFinite(element.duration) && element.duration > 0 ? element.duration : player.duration
       const music = getMusic()
-      if (music.sleepUntil && Date.now() >= music.sleepUntil) {
-        element.pause()
-        clearSleep()
-        stopLoop()
-        setPlayer({ playing: false, currentTime: element.currentTime, duration })
-        return
+      if (music.sleepUntil || music.sleepMode === "end") {
+        const left = music.sleepUntil ? (music.sleepUntil - Date.now()) / 1000 : duration - element.currentTime
+        if (left <= 8 && left > 0 && audioCtx && master && !sleepFading) {
+          sleepFading = true
+          master.gain.cancelScheduledValues(audioCtx.currentTime)
+          master.gain.linearRampToValueAtTime(0, audioCtx.currentTime + left)
+        }
+        if (left <= 0.15) {
+          element.pause()
+          clearSleep()
+          sleepFading = false
+          stopLoop()
+          setPlayer({ playing: false, currentTime: element.currentTime, duration })
+          applyVolume()
+          return
+        }
       }
       const track = currentTrack()
       if (track && player.playbackKind === "audio") {
@@ -628,7 +675,8 @@ async function load(index: number, autoplay = true) {
     return
   }
   const kind: PlaybackKind = source.info?.kind === "video" || source.info?.kind === "audio" ? source.info.kind : track.kind
-  if (kind === "audio" && (getMusic().crossfade > 0 || getMusic().normalize || !eqIsFlat(activeEq(track.path).bands))) ensureGraph()
+  const gainDb = source.info?.gain ?? 0
+  if (kind === "audio" && (getMusic().crossfade > 0 || getMusic().normalize || Math.abs(gainDb) > 0.2 || !eqIsFlat(activeEq(track.path).bands))) ensureGraph()
   void audioCtx?.resume()
   const element = kind === "video" ? video : audio
   const other = kind === "video" ? audio : video
@@ -650,6 +698,7 @@ async function load(index: number, autoplay = true) {
   setPlayer({ playbackKind: kind, error: null })
   element.loop = player.repeat === "one"
   element.src = source.src
+  setTrim(element, gainDb)
   applyVolume()
   placeVideo()
   await waitForMeta(element)
@@ -713,6 +762,7 @@ async function beginCrossfade(nextIndex: number, seconds: number) {
   const outGain = incoming === audioAlt ? gainA : gainB
   incoming.src = source.src
   incoming.loop = false
+  setTrim(incoming, source.info?.gain ?? 0)
   try {
     await incoming.play()
   } catch {

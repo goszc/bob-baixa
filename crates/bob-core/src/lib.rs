@@ -1,4 +1,10 @@
+mod ai;
+mod discord_ipc;
 mod drive_media;
+mod gain;
+mod redact;
+mod spotify;
+mod winpath;
 mod drive_queue;
 mod health;
 mod identify;
@@ -15,7 +21,13 @@ mod pkce;
 mod queue;
 mod tags;
 
+pub use ai::*;
+pub use discord_ipc::*;
 pub use drive_media::*;
+pub use gain::*;
+pub use redact::*;
+pub use spotify::*;
+pub use winpath::*;
 pub use drive_queue::*;
 pub use health::*;
 pub use identify::*;

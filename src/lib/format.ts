@@ -8,7 +8,12 @@ export function isTime(value: string): boolean {
 export function extractUrls(text: string): string[] {
   const found = text.match(/https?:\/\/[^\s<>"']+/gi) ?? []
   const cleaned = found.map((url) => url.replace(/[),.;]+$/g, ""))
-  return [...new Set(cleaned)]
+  const uris = text.match(/spotify:(track|album|playlist):[A-Za-z0-9]{10,40}/gi) ?? []
+  const canonical = uris.map((uri) => {
+    const [, kind, id] = uri.split(":")
+    return `https://open.spotify.com/${kind}/${id}`
+  })
+  return [...new Set([...cleaned, ...canonical])]
 }
 
 export function formatBytes(bytes: number, lang: Lang): string {

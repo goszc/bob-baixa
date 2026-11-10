@@ -26,6 +26,8 @@ pub struct MediaInspect {
     pub src: String,
     #[serde(default)]
     pub cover: String,
+    #[serde(default)]
+    pub gain: f64,
 }
 
 /// Inspect a file that was already downloaded. Nothing here talks to YouTube.
@@ -46,6 +48,7 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
                         duration: record.duration,
                         src,
                         cover: record.cover,
+                        gain: saved_gain(&app, &path),
                     });
                 }
             }
@@ -59,6 +62,7 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
             duration: record.duration,
             src: format!("http://127.0.0.1:47821/drive/{id}"),
             cover: record.cover,
+            gain: saved_gain(&app, &path),
         });
     }
     let file = PathBuf::from(&path);
@@ -73,6 +77,7 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
             duration: None,
             src: String::new(),
             cover: String::new(),
+            gain: 0.0,
         });
     }
     app.asset_protocol_scope()
@@ -97,7 +102,19 @@ pub async fn inspect_media(app: tauri::AppHandle, path: String) -> Result<MediaI
         duration: embedded.duration,
         src,
         cover: String::new(),
+        gain: saved_gain(&app, &path),
     })
+}
+
+fn saved_gain(app: &tauri::AppHandle, path: &str) -> f64 {
+    let dir = app
+        .state::<crate::runtime::AppState>()
+        .inner
+        .try_lock()
+        .ok()
+        .map(|inner| inner.data_dir.clone())
+        .unwrap_or_default();
+    crate::loudness::gain_for(&dir, path).unwrap_or(0.0)
 }
 
 /// Embedded tags, sibling `.lrc`, then lrcmux, Karalyr, LRCLIB and lyrics.ovh.

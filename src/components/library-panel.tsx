@@ -65,6 +65,7 @@ export function LibraryPanel({
   const [group, setGroup] = useState<string | null>(null)
   const [playlistId, setPlaylistId] = useState<string | null>(null)
   const [name, setName] = useState("")
+  const [described, setDescribed] = useState<Track[] | null>(null)
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
     if (!needle) return tracks
@@ -82,7 +83,22 @@ export function LibraryPanel({
     playTracks(list, index)
   }
 
-  function radio(track: Track) {
+  async function radio(track: Track) {
+    if (isTauri()) {
+      try {
+        const paths = await invoke<string[]>("ai_similar", {
+          path: track.path,
+          tracks: tracks.slice(0, 180).map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, lyrics: "" })),
+        })
+        const list = paths.map((path) => tracks.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
+        if (list.length > 1) {
+          playTracks(list, 0, true)
+          return
+        }
+      } catch {
+        /* artist and album still build the radio */
+      }
+    }
     const list = relatedTracks(track, tracks)
     if (list.length < 2) return
     playTracks(list, 0, true)
@@ -142,16 +158,37 @@ export function LibraryPanel({
         ))}
       </div>
       {music.view !== "retro" && music.view !== "playlists" ? (
-        <Input value={query} onChange={(event) => onQuery(event.target.value)} placeholder={t("player_filter")} className="mb-3 h-9" />
+        <>
+        <Input value={query} onChange={(event) => { setDescribed(null); onQuery(event.target.value) }} placeholder={t("player_filter")} className="mb-3 h-9" />
+        {query.trim().length > 8 ? (
+          <button
+            type="button"
+            className="mb-3 text-left text-[12px] text-muted hover:text-ink"
+            onClick={() => {
+              if (!isTauri()) return
+              void invoke<string[]>("ai_describe", {
+                query,
+                tracks: tracks.slice(0, 180).map((item) => ({ path: item.path, artist: item.artist, title: item.title, album: item.album, lyrics: "" })),
+              }).then((paths) => {
+                const list = paths.map((path) => tracks.find((item) => item.path === path)).filter((item): item is Track => Boolean(item))
+                setDescribed(list)
+                setView("tracks")
+              })
+            }}
+          >
+            {t("player_describe")}
+          </button>
+        ) : null}
+        </>
       ) : null}
       <div className="min-h-0 flex-1 space-y-1 overflow-auto pb-4">
         {music.view === "retro" ? <Retrospective /> : null}
         {music.view === "mix" ? <MixList tracks={filtered} /> : null}
         {music.view === "care" ? <CarePanel tracks={tracks} /> : null}
         {music.view === "tracks" ? (
-          filtered.length ? (
-            filtered.map((track, index) => (
-              <TrackRow key={track.path} track={track} library={tracks} onPlay={() => play(filtered, index)} onRadio={() => radio(track)} render={renderTrack} />
+          (described ?? filtered).length ? (
+            (described ?? filtered).map((track, index) => (
+              <TrackRow key={track.path} track={track} library={tracks} onPlay={() => play(described ?? filtered, index)} onRadio={() => void radio(track)} render={renderTrack} />
             ))
           ) : (
             <div className="px-2 py-8">
@@ -455,17 +492,8 @@ function ListeningTools() {
     <div className="mt-2 space-y-2 border-t border-line pt-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[12px] text-muted">{t("player_crossfade")}</span>
-        {[0, 2, 3].map((seconds) => (
-          <button
-            key={seconds}
-            type="button"
-            aria-pressed={music.crossfade === seconds}
-            className={cn("h-7 rounded-full px-2 text-[12px]", music.crossfade === seconds ? "bg-fill text-onfill" : "bg-soft text-muted")}
-            onClick={() => setCrossfade(seconds)}
-          >
-            {seconds === 0 ? t("player_off") : `${seconds}s`}
-          </button>
-        ))}
+        <input type="range" min={0} max={12} step={1} value={music.crossfade} aria-label={t("player_crossfade")} onChange={(event) => setCrossfade(Number(event.target.value))} />
+        <span className="text-[12px] tabular-nums text-muted">{music.crossfade === 0 ? t("player_off") : `${music.crossfade}s`}</span>
       </div>
       <label className="flex items-center justify-between gap-3 text-[13px]">
         <span>

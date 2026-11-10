@@ -67,17 +67,26 @@ export function PlayerEngine() {
 
   useEffect(() => {
     if (!isTauri()) return
-    let stop = () => {}
+    const stops: Array<() => void> = []
     let alive = true
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window")
+      if (getCurrentWindow().label !== "main") return
+      return listen<string>("mini-control", (event) => systemControl(event.payload))
+    }).then((unlisten) => {
+      if (!unlisten) return
+      if (alive) stops.push(unlisten)
+      else unlisten()
+    })
     void import("@tauri-apps/api/event").then(({ listen }) =>
       listen<string>("player-hotkey", (event) => systemControl(event.payload)).then((unlisten) => {
-        if (alive) stop = unlisten
+        if (alive) stops.push(unlisten)
         else unlisten()
       }),
     )
     return () => {
       alive = false
-      stop()
+      stops.forEach((stop) => stop())
     }
   }, [])
 

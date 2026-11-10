@@ -106,7 +106,9 @@ dá para marcar faixa, playlist ou curtidas como disponível offline. o começo 
 
 um link público do spotify ou do youtube abre uma lista para marcar o que baixar. rádio fica na biblioteca. descobrir mistura o que você já tem com música nova, no modo econômico. a frase embaixo da biblioteca monta uma fila.
 
-a chave do gemini é colada em configurações e guardada como o token do drive. sem ela, as sugestões usam artista, álbum e o que você ouviu.
+a chave do gemini é colada em configurações e guardada como o token do drive. o modelo padrão é `gemini-3.5-flash-lite`, com `gemini-3.1-flash-lite` de reserva, `gemma-4-31b-it` para lote, `gemini-embedding-2` para buscar por descrição e `gemini-3.5-transcribe` para a letra. sem a chave, as sugestões usam artista, álbum e o que você ouviu.
+
+o discord pede o id do aplicativo nas configurações e o discord aberto no windows. gerar diagnóstico cria um zip na área de trabalho, sem a chave e sem o token do drive.
 
 ### ouvir no celular
 

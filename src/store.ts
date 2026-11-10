@@ -233,6 +233,27 @@ function withClip(item: EnqueueItem): EnqueueItem {
   }
 }
 
+function spotifyItem(
+  media: { url: string; channel?: string; title: string },
+  entry: { url: string; title: string; thumbnail?: string; duration?: number; artist?: string; album?: string; track?: number; cover?: string },
+): EnqueueItem {
+  const spotify = media.url.includes("open.spotify.com") || media.channel === "spotify"
+  return {
+    url: entry.url,
+    title: entry.title,
+    thumbnail: entry.thumbnail,
+    duration: entry.duration,
+    playlistTitle: media.title,
+    audioOnly: spotify ? true : undefined,
+    audioFormat: spotify ? "opus" : undefined,
+    audioBitrate: spotify ? "24k" : undefined,
+    tagArtist: entry.artist,
+    tagAlbum: entry.album,
+    tagTrack: entry.track,
+    tagCover: entry.cover || entry.thumbnail,
+  }
+}
+
 function itemsFromAnalyzed(): EnqueueItem[] {
   const current = getState()
   const items: EnqueueItem[] = []
@@ -241,15 +262,7 @@ function itemsFromAnalyzed(): EnqueueItem[] {
       const picked = new Set(current.entryChoice[media.id] ?? media.entries.map((entry) => entry.id))
       for (const entry of media.entries) {
         if (!picked.has(entry.id)) continue
-        items.push(
-          withClip({
-            url: entry.url,
-            title: entry.title,
-            thumbnail: entry.thumbnail,
-            duration: entry.duration,
-            playlistTitle: media.title,
-          }),
-        )
+        items.push(withClip(spotifyItem(media, entry)))
       }
       continue
     }
@@ -543,15 +556,7 @@ export async function addAnalyzed(id: string) {
   const picked = new Set(getState().entryChoice[id] ?? [])
   const items = media.entries
     .filter((entry) => picked.has(entry.id))
-    .map((entry) =>
-      withClip({
-        url: entry.url,
-        title: entry.title,
-        thumbnail: entry.thumbnail,
-        duration: entry.duration,
-        playlistTitle: media.title,
-      }),
-    )
+    .map((entry) => withClip(spotifyItem(media, entry)))
   await considerEnqueue(items)
 }
 
@@ -925,6 +930,28 @@ export async function pickConvertFile() {
 
 export async function openOutput(path: string) {
   await revealPath(path)
+}
+
+export async function makeDiagnostic() {
+  setState({ busy: "tools", error: null })
+  try {
+    if (isTauri()) await invoke("make_diagnostic")
+    say("settings_diagnostic_done")
+    setState({ busy: null })
+  } catch (error) {
+    setState({ busy: null, error: errorText(error) })
+  }
+}
+
+export async function measureLibrary() {
+  setState({ busy: "tools", error: null })
+  try {
+    const count = isTauri() ? await invoke<number>("backfill_gains", { root: getState().config.outputDir }) : 0
+    say("settings_gain_done", { n: count })
+    setState({ busy: null })
+  } catch (error) {
+    setState({ busy: null, error: errorText(error) })
+  }
 }
 
 export async function checkUpdates() {

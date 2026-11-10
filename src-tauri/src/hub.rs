@@ -1,19 +1,10 @@
 //! Offline pins, Gemini, trash, playlist import and the startup repair.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use bob_core::{
-    cleaned_title, gemini_allow, gemini_backoff, gemini_hit, meaning_text, parse_model_json, parse_spotify, pick_match, radio_score,
-    spotify_url, suggestions_from_json, top_artists, Candidate, GeminiClock, SpotifyKind,
-};
+use bob_core::{cleaned_title, meaning_text, radio_score, suggestions_from_json, top_artists};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::Manager;
-
-use crate::runtime::{capture, AppState};
-
 #[derive(Default, Serialize, Deserialize)]
 struct Pins {
     #[serde(default)]
@@ -40,7 +31,6 @@ pub struct TrashItem {
     pub title: String,
 }
 
-static CLOCK: Mutex<GeminiClock> = Mutex::new(GeminiClock { minute: 0, used: 0, cooldown_until: 0 });
 
 pub fn pinned(path: &str) -> bool {
     let Ok(dir) = crate::drive::data_dir_public() else { return false };
@@ -245,86 +235,9 @@ pub struct LibraryRow {
     pub plays: u32,
 }
 
-pub async fn review_spotify(bin: &Path, url: &str) -> Result<bob_core::MediaItem, String> {
-    let link = parse_spotify(url).ok_or_else(|| "link do spotify não reconhecido".to_string())?;
-    let client = reqwest::Client::builder().user_agent("Mozilla/5.0 bob-baixa").timeout(std::time::Duration::from_secs(25)).build().map_err(|error| error.to_string())?;
-    let token = public_token(&client).await?;
-    let (title, tracks) = load_public(&client, &token, &link).await?;
-    let mut entries = Vec::new();
-    let mut unmatched = Vec::new();
-    for track in tracks {
-        match search_one(bin, &track).await {
-            Some(found) => entries.push(bob_core::PlaylistEntry {
-                id: found.clone(),
-                url: found,
-                title: track.title.clone(),
-                duration: track.duration,
-                thumbnail: None,
-                artist: track.artist.clone(),
-                album: track.album.clone(),
-                track: track.number,
-                cover: String::new(),
-            }),
-            None => unmatched.push(format!("{} — {}", track.artist, track.title)),
-        }
-    }
-    Ok(bob_core::MediaItem {
-        kind: "playlist".into(),
-        id: link.id.clone(),
-        url: spotify_url(&link),
-        title,
-        channel: Some("spotify".into()),
-        duration: None,
-        thumbnail: None,
-        view_count: None,
-        formats: Vec::new(),
-        entries,
-        unmatched,
-    })
-}
-
-struct Remote {
-    title: String,
-    artist: String,
-    album: String,
-    duration: Option<f64>,
-    number: u32,
-}
 
 async fn ask(app: &tauri::AppHandle, prompt: &str) -> Option<Value> {
-    let key = crate::drive::read_gemini_key()?;
-    let model = {
-        app.state::<AppState>().inner.clone().lock_owned().await.config.gemini_model.clone()
-    };
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    {
-        let clock = CLOCK.lock().ok()?;
-        if !gemini_allow(&clock, now, 15) {
-            return None;
-        }
-    }
-    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}");
-    let body = json!({
-        "contents": [{ "parts": [{ "text": prompt }] }],
-        "generationConfig": { "responseMimeType": "application/json", "temperature": 0.4 }
-    });
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(40)).build().ok()?;
-    let response = client.post(url).json(&body).send().await.ok()?;
-    if response.status().as_u16() == 429 {
-        if let Ok(mut clock) = CLOCK.lock() {
-            gemini_backoff(&mut clock, now);
-        }
-        return None;
-    }
-    if !response.status().is_success() {
-        return None;
-    }
-    let value: Value = response.json().await.ok()?;
-    let text = value.pointer("/candidates/0/content/parts/0/text")?.as_str()?;
-    if let Ok(mut clock) = CLOCK.lock() {
-        gemini_hit(&mut clock, now);
-    }
-    parse_model_json(text).ok()
+    crate::ai::complete_json(app, prompt).await
 }
 
 async fn warm_some(app: &tauri::AppHandle, limit: usize) -> Result<(), String> {
@@ -376,88 +289,6 @@ fn offline_file(id: &str) -> Option<PathBuf> {
     candidate.is_file().then_some(candidate)
 }
 
-async fn public_token(client: &reqwest::Client) -> Result<String, String> {
-    let value = client.get("https://open.spotify.com/get_access_token?reason=init&productType=web-player").send().await.map_err(|error| error.to_string())?.json::<Value>().await.map_err(|error| error.to_string())?;
-    value.get("accessToken").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "spotify sem token público".into())
-}
-
-async fn load_public(client: &reqwest::Client, token: &str, link: &bob_core::SpotifyRef) -> Result<(String, Vec<Remote>), String> {
-    match link.kind {
-        SpotifyKind::Track => {
-            let value = spotify_get(client, token, &format!("https://api.spotify.com/v1/tracks/{}", link.id)).await?;
-            let track = remote_from(&value, "");
-            Ok((track.title.clone(), vec![track]))
-        }
-        SpotifyKind::Album => {
-            let value = spotify_get(client, token, &format!("https://api.spotify.com/v1/albums/{}", link.id)).await?;
-            let title = value.get("name").and_then(Value::as_str).unwrap_or("álbum").to_string();
-            let tracks = page(client, token, value.get("tracks").cloned().unwrap_or(Value::Null), &title).await?;
-            Ok((title, tracks))
-        }
-        SpotifyKind::Playlist => {
-            let value = spotify_get(client, token, &format!("https://api.spotify.com/v1/playlists/{}?fields=name,tracks.items(track(name,duration_ms,track_number,artists(name),album(name))),tracks.next", link.id)).await?;
-            let title = value.get("name").and_then(Value::as_str).unwrap_or("playlist").to_string();
-            let tracks = page_playlist(client, token, value.get("tracks").cloned().unwrap_or(Value::Null)).await?;
-            Ok((title, tracks))
-        }
-    }
-}
-
-async fn page(client: &reqwest::Client, token: &str, mut page: Value, album: &str) -> Result<Vec<Remote>, String> {
-    let mut out = Vec::new();
-    for _ in 0..30 {
-        let items = page.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
-        if items.is_empty() { break; }
-        for item in items {
-            out.push(remote_from(&item, album));
-        }
-        let Some(next) = page.get("next").and_then(Value::as_str) else { break };
-        page = spotify_get(client, token, next).await?;
-    }
-    Ok(out)
-}
-
-async fn page_playlist(client: &reqwest::Client, token: &str, mut page: Value) -> Result<Vec<Remote>, String> {
-    let mut out = Vec::new();
-    for _ in 0..30 {
-        let items = page.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
-        if items.is_empty() { break; }
-        for item in items {
-            if let Some(track) = item.get("track") {
-                if !track.is_null() {
-                    out.push(remote_from(track, ""));
-                }
-            }
-        }
-        let Some(next) = page.get("next").and_then(Value::as_str) else { break };
-        page = spotify_get(client, token, next).await?;
-    }
-    Ok(out)
-}
-
-fn remote_from(value: &Value, album: &str) -> Remote {
-    Remote {
-        title: value.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
-        artist: value.get("artists").and_then(Value::as_array).map(|list| list.iter().filter_map(|item| item.get("name").and_then(Value::as_str)).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
-        album: value.get("album").and_then(|album| album.get("name")).and_then(Value::as_str).unwrap_or(album).to_string(),
-        duration: value.get("duration_ms").and_then(Value::as_f64).map(|ms| ms / 1000.0),
-        number: value.get("track_number").and_then(Value::as_u64).unwrap_or(0) as u32,
-    }
-}
-
-async fn search_one(bin: &Path, track: &Remote) -> Option<String> {
-    let query = format!("{} {} audio", track.artist, track.title);
-    let output = capture(bin, &["-J".into(), "--flat-playlist".into(), "--no-warnings".into(), "--skip-download".into(), format!("ytsearch8:{query}")]).await.ok()?;
-    let value = bob_core::parse_json_value_text(&output).ok()?;
-    let hits = bob_core::parse_search(&value);
-    let candidates: Vec<Candidate> = hits.iter().map(|hit| Candidate { title: hit.title.clone(), channel: hit.channel.clone().unwrap_or_default(), duration: hit.duration }).collect();
-    let index = pick_match(&track.artist, &track.title, track.duration, &candidates)?;
-    Some(hits[index].url.clone())
-}
-
-async fn spotify_get(client: &reqwest::Client, token: &str, url: &str) -> Result<Value, String> {
-    client.get(url).bearer_auth(token).send().await.map_err(|error| error.to_string())?.error_for_status().map_err(|error| error.to_string())?.json().await.map_err(|error| error.to_string())
-}
 
 pub fn radio_order(seed_artist: &str, seed_album: &str, rows: &[LibraryRow]) -> Vec<String> {
     let mut scored: Vec<(i32, String)> = rows

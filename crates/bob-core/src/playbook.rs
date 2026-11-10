@@ -182,104 +182,6 @@ pub fn radio_score(seed_artist: &str, seed_album: &str, artist: &str, album: &st
     score
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpotifyKind {
-    Track,
-    Album,
-    Playlist,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpotifyRef {
-    pub kind: SpotifyKind,
-    pub id: String,
-}
-
-pub fn parse_spotify(text: &str) -> Option<SpotifyRef> {
-    let trimmed = text.trim().trim_matches(|c: char| "<>\"'()[]{},;".contains(c));
-    if let Some(rest) = trimmed.strip_prefix("spotify:") {
-        return spotify_parts(rest);
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    let host = lower.find("open.spotify.com/")?;
-    let rest = trimmed[host + "open.spotify.com/".len()..].split(['?', '#']).next().unwrap_or("");
-    let mut parts = rest.split('/').filter(|part| !part.is_empty());
-    let mut kind = parts.next()?;
-    if kind.starts_with("intl-") {
-        kind = parts.next()?;
-    }
-    let id = parts.next()?;
-    spotify_parts(&format!("{kind}:{id}"))
-}
-
-fn spotify_parts(rest: &str) -> Option<SpotifyRef> {
-    let mut parts = rest.split([':', '/']);
-    let kind = match parts.next()?.to_ascii_lowercase().as_str() {
-        "track" => SpotifyKind::Track,
-        "album" => SpotifyKind::Album,
-        "playlist" => SpotifyKind::Playlist,
-        _ => return None,
-    };
-    let id = parts.next()?.split('?').next().unwrap_or("");
-    if id.len() < 10 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return None;
-    }
-    Some(SpotifyRef { kind, id: id.to_string() })
-}
-
-pub fn spotify_url(link: &SpotifyRef) -> String {
-    let kind = match link.kind {
-        SpotifyKind::Track => "track",
-        SpotifyKind::Album => "album",
-        SpotifyKind::Playlist => "playlist",
-    };
-    format!("https://open.spotify.com/{kind}/{}", link.id)
-}
-
-#[derive(Debug, Clone)]
-pub struct Candidate {
-    pub title: String,
-    pub channel: String,
-    pub duration: Option<f64>,
-}
-
-pub fn pick_match(artist: &str, title: &str, duration: Option<f64>, candidates: &[Candidate]) -> Option<usize> {
-    let mut best: Option<(i32, usize)> = None;
-    for (index, candidate) in candidates.iter().enumerate() {
-        let score = score_match(artist, title, duration, candidate);
-        if best.map(|(current, _)| score > current).unwrap_or(true) {
-            best = Some((score, index));
-        }
-    }
-    best.filter(|(score, _)| *score >= 4).map(|(_, index)| index)
-}
-
-fn score_match(artist: &str, title: &str, duration: Option<f64>, candidate: &Candidate) -> i32 {
-    let hay = format!("{} {}", candidate.title, candidate.channel).to_lowercase();
-    let want_title = title.trim().to_lowercase();
-    let want_artist = artist.trim().to_lowercase();
-    let mut score = 0;
-    if !want_title.is_empty() && hay.contains(&want_title) {
-        score += 4;
-    } else {
-        score -= 3;
-    }
-    if !want_artist.is_empty() && hay.contains(&want_artist) {
-        score += 3;
-    }
-    if let (Some(want), Some(got)) = (duration, candidate.duration) {
-        if (want - got).abs() <= 3.0 {
-            score += 6;
-        } else {
-            return -20;
-        }
-    }
-    if hay.contains("official audio") || hay.contains("topic") {
-        score += 3;
-    }
-    score
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,8 +232,5 @@ mod tests {
         gemini_backoff(&mut clock, 120);
         assert!(!gemini_allow(&clock, 130, 15));
         assert!(gemini_allow(&clock, 181, 15));
-        let link = parse_spotify("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=abc").unwrap();
-        assert_eq!(link.kind, SpotifyKind::Playlist);
-        assert!(parse_spotify("spotify:track:11dFghVXANMlKmJXsNCbNl").is_some());
     }
 }

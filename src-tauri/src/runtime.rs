@@ -262,7 +262,11 @@ pub async fn analyze(app: &AppHandle, urls: Vec<String>) -> Result<Vec<MediaItem
         let limit = limit.clone();
         tasks.push(async move {
             let _permit = limit.acquire().await.map_err(|error| error.to_string())?;
-            let item = analyze_one(&bin, url).await?;
+            let item = if let Some(link) = bob_core::parse_spotify(&url) {
+                crate::spotify::resolve(&bin, &link).await?
+            } else {
+                analyze_one(&bin, url).await?
+            };
             Ok::<_, String>((index, item))
         });
     }
@@ -272,9 +276,6 @@ pub async fn analyze(app: &AppHandle, urls: Vec<String>) -> Result<Vec<MediaItem
 }
 
 async fn analyze_one(bin: &Path, url: String) -> Result<MediaItem, String> {
-    if bob_core::parse_spotify(&url).is_some() {
-        return crate::hub::review_spotify(bin, &url).await;
-    }
     let output = capture(
         bin,
         &[
@@ -342,13 +343,27 @@ pub async fn enqueue(app: &AppHandle, items: Vec<EnqueueItem>) -> Result<(), Str
         }
         let hold = inner.schedule_at.clone();
         let config = inner.config.clone();
+        let mut tagged = Vec::new();
         for item in items {
             if !(item.url.starts_with("http://") || item.url.starts_with("https://") || item.url.starts_with("ytsearch")) {
                 continue;
             }
+            if item.tag_artist.is_some() || item.tag_album.is_some() || item.tag_cover.is_some() || item.tag_track.unwrap_or(0) > 0 {
+                tagged.push(crate::loudness::PendingTag {
+                    url: item.url.clone(),
+                    title: item.title.clone().unwrap_or_default(),
+                    artist: item.tag_artist.clone().unwrap_or_default(),
+                    album: item.tag_album.clone().unwrap_or_default(),
+                    track: item.tag_track.unwrap_or(0),
+                    cover: item.tag_cover.clone().unwrap_or_default(),
+                });
+            }
             inner
                 .jobs
                 .insert(0, Job::from_item(item, &config, hold.as_deref()));
+        }
+        if !tagged.is_empty() {
+            crate::loudness::remember_tags(&inner.data_dir, &tagged);
         }
         jobs_len = inner.jobs.len();
         save(&inner);

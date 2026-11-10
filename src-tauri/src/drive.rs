@@ -1417,6 +1417,31 @@ fn file_label(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+pub fn queue_report() -> String {
+    let Ok(queue) = queue_lock().lock() else {
+        return "fila de envio indisponível".into();
+    };
+    if queue.is_empty() {
+        return "fila de envio vazia".into();
+    }
+    queue
+        .iter()
+        .map(|item| {
+            format!(
+                "{} | {} | {} | tentativas {} | enviados {}/{} | {}",
+                file_label(&item.path),
+                if item.phase.is_empty() { "aguardando" } else { item.phase.as_str() },
+                item.title,
+                item.attempts,
+                item.sent,
+                item.total,
+                item.error
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn log_path() -> PathBuf {
     root_dir().lock().map(|dir| dir.join("drive.log")).unwrap_or_else(|_| PathBuf::from("drive.log"))
 }

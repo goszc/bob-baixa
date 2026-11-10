@@ -72,8 +72,24 @@ pub struct Config {
     /// Share of a discovery shuffle that should be new songs. 0 to 0.8.
     #[serde(default = "default_discover_ratio")]
     pub discover_ratio: f64,
-    #[serde(default = "default_gemini_model")]
-    pub gemini_model: String,
+    #[serde(default = "default_flash")]
+    pub gemini_flash: String,
+    #[serde(default = "default_flash_fallback")]
+    pub gemini_flash_fallback: String,
+    #[serde(default = "default_bulk")]
+    pub gemini_bulk: String,
+    #[serde(default = "default_embed")]
+    pub gemini_embed: String,
+    #[serde(default = "default_transcribe")]
+    pub gemini_transcribe: String,
+    #[serde(default)]
+    pub gemini_auto_lyrics: bool,
+    #[serde(default = "default_lyrics_budget")]
+    pub gemini_lyrics_budget: u32,
+    #[serde(default)]
+    pub discord: bool,
+    #[serde(default)]
+    pub discord_client_id: String,
 }
 
 impl Default for Config {
@@ -126,9 +142,41 @@ impl Default for Config {
             queue_new_downloads: true,
             queue_new_where: default_queue_where(),
             discover_ratio: default_discover_ratio(),
-            gemini_model: default_gemini_model(),
+            gemini_flash: default_flash(),
+            gemini_flash_fallback: default_flash_fallback(),
+            gemini_bulk: default_bulk(),
+            gemini_embed: default_embed(),
+            gemini_transcribe: default_transcribe(),
+            gemini_auto_lyrics: false,
+            gemini_lyrics_budget: default_lyrics_budget(),
+            discord: false,
+            discord_client_id: String::new(),
         }
     }
+}
+
+fn default_flash() -> String {
+    "gemini-3.5-flash-lite".into()
+}
+
+fn default_flash_fallback() -> String {
+    "gemini-3.1-flash-lite".into()
+}
+
+fn default_bulk() -> String {
+    "gemma-4-31b-it".into()
+}
+
+fn default_embed() -> String {
+    "gemini-embedding-2".into()
+}
+
+fn default_transcribe() -> String {
+    "gemini-3.5-transcribe".into()
+}
+
+fn default_lyrics_budget() -> u32 {
+    5
 }
 
 fn default_queue_where() -> String {
@@ -137,10 +185,6 @@ fn default_queue_where() -> String {
 
 fn default_discover_ratio() -> f64 {
     0.35
-}
-
-fn default_gemini_model() -> String {
-    "gemini-2.5-flash".into()
 }
 
 fn default_translate_lang() -> String {
@@ -283,6 +327,14 @@ pub struct EnqueueItem {
     /// When set, the file is saved under `outputDir/<sanitized title>`.
     #[serde(default)]
     pub playlist_title: Option<String>,
+    #[serde(default)]
+    pub tag_artist: Option<String>,
+    #[serde(default)]
+    pub tag_album: Option<String>,
+    #[serde(default)]
+    pub tag_track: Option<u32>,
+    #[serde(default)]
+    pub tag_cover: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
