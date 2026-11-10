@@ -363,6 +363,14 @@ const pt = {
   settings_drive_only_hint: "depois do envio, apaga a cópia deste computador. a reprodução vem do drive.",
   settings_drive_library: "enviar a biblioteca",
   settings_drive_hint: "as faixas novas sobem para bob baixa/músicas/artista/álbum e os vídeos para bob baixa/vídeos. playlists, curtidas e a retrospectiva vão num json na pasta do app.",
+  settings_drive_test: "testar conexão",
+  settings_drive_waiting: "aguardando",
+  settings_drive_sending: "enviando {n}%",
+  settings_drive_sent: "enviado",
+  settings_drive_open: "abrir no drive",
+  settings_drive_retry: "tentar de novo",
+  settings_drive_log: "abrir o registro",
+  settings_drive_quota: "{used} de {limit}",
 } as const
 
 const en: Record<keyof typeof pt, string> = {
@@ -728,6 +736,14 @@ const en: Record<keyof typeof pt, string> = {
   settings_drive_only_hint: "after the upload, deletes the copy on this computer. playback comes from drive.",
   settings_drive_library: "upload the library",
   settings_drive_hint: "new tracks go to bob baixa/músicas/artist/album and videos to bob baixa/vídeos. playlists, likes and the retrospective go in a json file in the app folder.",
+  settings_drive_test: "test connection",
+  settings_drive_waiting: "waiting",
+  settings_drive_sending: "uploading {n}%",
+  settings_drive_sent: "uploaded",
+  settings_drive_open: "open in drive",
+  settings_drive_retry: "try again",
+  settings_drive_log: "open the log",
+  settings_drive_quota: "{used} of {limit}",
 }
 
 export type Key = keyof typeof pt

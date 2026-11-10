@@ -1,5 +1,9 @@
 # changelog
 
+## 0.5.2
+
+- o envio ao drive mostra aguardando, o percentual, o link no drive ou o erro com tentar de novo. o google responde 308 quando o arquivo ainda não acabou, e o cliente tratava isso como redirecionamento, então o envio não terminava e a fila ficava parada. testar conexão mostra o e-mail e a cota. o registro fica em drive.log
+
 ## 0.5.1
 
 - entrar com google abre a url inteira. no windows o `cmd /c start` cortava no `&` e o google dizia que faltava `response_type`

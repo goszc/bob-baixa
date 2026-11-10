@@ -243,17 +243,45 @@ function Hotkey({ label, value, onChange }: { label: string; value: string; onCh
   )
 }
 
+interface DriveStatus {
+  enabled: boolean
+  connected: boolean
+  pending: number
+  email?: string
+}
+
+interface DriveItem {
+  path: string
+  name: string
+  phase: string
+  percent: number
+  error: string
+  link: string
+}
+
+function formatBytes(value: number) {
+  if (!value) return "0 MB"
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`
+  return `${Math.max(1, Math.round(value / 1_000_000))} MB`
+}
+
 function DriveSection() {
   const app = useApp()
   const t = useT()
-  const [status, setStatus] = useState<{ enabled: boolean; connected: boolean; pending: number } | null>(null)
+  const [status, setStatus] = useState<DriveStatus | null>(null)
+  const [items, setItems] = useState<DriveItem[]>([])
   const [note, setNote] = useState("")
   const [busy, setBusy] = useState(false)
-  useEffect(() => {
+  const refresh = () => {
     if (!isTauri()) return
-    void invoke<{ enabled: boolean; connected: boolean; pending: number }>("drive_status")
-      .then(setStatus)
-      .catch(() => setStatus(null))
+    void invoke<DriveStatus>("drive_status").then(setStatus).catch(() => setStatus(null))
+    void invoke<DriveItem[]>("drive_queue").then(setItems).catch(() => setItems([]))
+  }
+  useEffect(() => {
+    refresh()
+    if (!isTauri()) return
+    const timer = window.setInterval(refresh, 1500)
+    return () => window.clearInterval(timer)
   }, [])
   const built = typeof __BOB_DRIVE__ !== "undefined" && __BOB_DRIVE__
   if (!built && !status?.enabled) return null
@@ -261,7 +289,7 @@ function DriveSection() {
     <Section title={t("settings_drive")}>
       <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_drive_hint")}</p>
       <p className="pb-3 text-[13px] text-muted">
-        {status?.connected ? t("settings_drive_connected") : ""}
+        {status?.connected ? `${t("settings_drive_connected")}${status.email ? ` · ${status.email}` : ""}` : ""}
         {status ? ` · ${t("settings_drive_pending").replace("{n}", String(status.pending))}` : ""}
       </p>
       <div className="flex flex-wrap gap-2 pb-3">
@@ -270,10 +298,11 @@ function DriveSection() {
           onClick={() => {
             setBusy(true)
             setNote("")
-            void invoke<{ enabled: boolean; connected: boolean; pending: number }>("drive_connect")
+            void invoke<DriveStatus>("drive_connect")
               .then((next) => {
                 setStatus(next)
-                setNote(t("settings_drive_connected"))
+                setNote(next.email ? `${t("settings_drive_connected")} · ${next.email}` : t("settings_drive_connected"))
+                refresh()
               })
               .catch((error: unknown) => setNote(error instanceof Error ? error.message : String(error)))
               .finally(() => setBusy(false))
@@ -302,7 +331,58 @@ function DriveSection() {
         >
           {t("settings_drive_library")}
         </Button>
+        <Button
+          variant="outline"
+          disabled={!status?.connected || busy}
+          onClick={() => {
+            setBusy(true)
+            setNote("")
+            void invoke<{ email: string; usage: number; limit: number }>("drive_test")
+              .then((account) => {
+                const quota = t("settings_drive_quota")
+                  .replace("{used}", formatBytes(account.usage))
+                  .replace("{limit}", account.limit ? formatBytes(account.limit) : "—")
+                setNote(`${account.email} · ${quota}`)
+                refresh()
+              })
+              .catch((error: unknown) => setNote(error instanceof Error ? error.message : String(error)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          {t("settings_drive_test")}
+        </Button>
+        <Button variant="ghost" onClick={() => void invoke("drive_open", { target: "log" })}>
+          {t("settings_drive_log")}
+        </Button>
       </div>
+      <ul className="pb-2">
+        {items.map((item) => (
+          <li key={item.path} className="flex items-center justify-between gap-3 border-b border-line py-2 text-[13px]">
+            <span className="min-w-0">
+              <span className="block truncate">{item.name}</span>
+              <span className="text-muted">
+                {item.phase === "uploading"
+                  ? t("settings_drive_sending").replace("{n}", String(item.percent))
+                  : item.phase === "sent"
+                    ? t("settings_drive_sent")
+                    : item.phase === "failed"
+                      ? item.error || t("player_failed")
+                      : t("settings_drive_waiting")}
+              </span>
+            </span>
+            {item.phase === "sent" && item.link ? (
+              <button type="button" className="shrink-0 text-muted hover:text-ink" onClick={() => void invoke("drive_open", { target: item.link })}>
+                {t("settings_drive_open")}
+              </button>
+            ) : null}
+            {item.phase === "failed" ? (
+              <button type="button" className="shrink-0 text-muted hover:text-ink" onClick={() => void invoke("drive_retry", { path: item.path }).then(refresh)}>
+                {t("settings_drive_retry")}
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
       <Row label={t("settings_drive_only")} hint={t("settings_drive_only_hint")}>
         <Switch label={t("settings_drive_only")} checked={app.config.driveOnly} onCheckedChange={(value) => setConfig({ driveOnly: value })} />
       </Row>
