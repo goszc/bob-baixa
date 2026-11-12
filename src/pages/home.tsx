@@ -1,4 +1,4 @@
-import { useEffect, useState, type DragEvent } from "react"
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react"
 import { Field } from "../components/field"
 import { PageHeader } from "../components/page-header"
 import { Thumb } from "../components/thumb"
@@ -99,7 +99,7 @@ export function Home() {
             </button>
           </div>
         ) : (
-          <div className="home-row mt-4">
+          <HomeRow>
             {recent.map((track, index) => (
               <button key={track.path} type="button" className="rounded-2xl bg-soft p-3 text-left" onClick={() => playTracks(recent, index)}>
                 <Thumb src={track.thumbnail} videoUrl={track.pageUrl || track.title} className="aspect-square w-full rounded-xl" />
@@ -107,7 +107,7 @@ export function Home() {
                 <span className="block truncate text-[12px] text-muted">{track.artist}</span>
               </button>
             ))}
-          </div>
+          </HomeRow>
         )}
       </section>
       {weekly.length ? (
@@ -395,6 +395,27 @@ function Presets() {
           </Button>
         ) : null}
       </div>
+    </div>
+  )
+}
+
+function HomeRow({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  function scroll(dir: number) {
+    ref.current?.scrollBy({ left: dir * 200, behavior: "smooth" })
+  }
+  return (
+    <div className="relative mt-4">
+      <div ref={ref} className="home-row pr-8">
+        {children}
+      </div>
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-bg to-transparent" />
+      <button type="button" aria-label="←" className="absolute top-1/3 left-0 grid h-8 w-8 place-items-center rounded-full bg-surface text-[14px]" onClick={() => scroll(-1)}>
+        ‹
+      </button>
+      <button type="button" aria-label="→" className="absolute top-1/3 right-0 grid h-8 w-8 place-items-center rounded-full bg-surface text-[14px]" onClick={() => scroll(1)}>
+        ›
+      </button>
     </div>
   )
 }

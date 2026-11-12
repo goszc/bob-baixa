@@ -1,7 +1,5 @@
 import { useEffect } from "react"
 import { Shell } from "./components/shell"
-import { Convert } from "./pages/convert"
-import { History } from "./pages/history"
 import { Discover } from "./pages/discover"
 import { Download } from "./pages/download"
 import { Home } from "./pages/home"
@@ -10,8 +8,6 @@ import { Likes } from "./pages/likes"
 import { Player } from "./pages/player"
 import { Playlists } from "./pages/playlists"
 import { seedDemoMusic } from "./lib/demo-library"
-import { Monitor } from "./pages/monitor"
-import { Queue } from "./pages/queue"
 import { Search } from "./pages/search"
 import { Settings } from "./pages/settings"
 import { MiniPlayer } from "./components/mini-player"
@@ -29,9 +25,10 @@ export default function App() {
     if (demo === "library" || demo === "menu") go("library")
     if (demo === "likes") go("likes")
     if (demo === "discover") go("discover")
-    if (demo === "download") go("download")
-    if (demo === "playlists") go("playlists")
-    if (demo === "home") go("home")
+    if (demo === "download" || demo === "fila-download") go("download")
+    if (demo === "playlists" || demo === "playlist") go("playlists")
+    if (demo === "home" || demo === "letra" || demo === "fila" || demo === "biblioteca") go("home")
+    if (demo === "settings") go("settings")
   }, [])
   if (miniWindow) return <MiniPlayer />
   return (
@@ -41,13 +38,9 @@ export default function App() {
       {page === "player" && <Player />}
       {page === "likes" && <Likes />}
       {page === "discover" && <Discover />}
-      {page === "download" && <Download />}
+      {(page === "download" || page === "queue" || page === "convert" || page === "monitor" || page === "history") && <Download />}
       {page === "playlists" && <Playlists />}
-      {page === "queue" && <Queue />}
       {page === "search" && <Search />}
-      {page === "convert" && <Convert />}
-      {page === "monitor" && <Monitor />}
-      {page === "history" && <History />}
       {page === "settings" && <Settings />}
     </Shell>
   )

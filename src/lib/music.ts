@@ -95,7 +95,7 @@ function load(): MusicState {
       eqScope: parsed.eqScope === "track" ? "track" : "global",
       eqByPath: parsed.eqByPath && typeof parsed.eqByPath === "object" ? parsed.eqByPath : {},
       lyricNudge: parsed.lyricNudge && typeof parsed.lyricNudge === "object" ? parsed.lyricNudge : {},
-      cinema: Boolean(parsed.cinema),
+      cinema: false,
     }
   } catch {
     return empty()

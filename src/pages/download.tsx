@@ -2,9 +2,15 @@ import { useState } from "react"
 import { Ellipsis } from "lucide-react"
 import { Progress } from "../components/progress"
 import { Segmented } from "../components/segmented"
-import type { Job, JobState, Quality } from "../lib/types"
+import { Thumb } from "../components/thumb"
+import type { Job, JobState, Page, Quality } from "../lib/types"
 import type { Key } from "../lib/i18n"
-import { enqueueItems, jobAction, setConfig, setDraft, useApp, useT } from "../store"
+import { cn } from "../lib/cn"
+import { enqueueItems, go, jobAction, setConfig, setDraft, useApp, useT } from "../store"
+import { Convert } from "./convert"
+import { History } from "./history"
+import { Monitor } from "./monitor"
+import { Queue } from "./queue"
 
 const QUALITIES: { value: Quality; key: Key }[] = [
   { value: "best", key: "best" },
@@ -50,9 +56,29 @@ export function Download() {
     setDraft("")
   }
 
+  const tab: Page = app.page === "queue" || app.page === "convert" || app.page === "monitor" || app.page === "history" ? app.page : "download"
+  const tabs: { id: Page; label: string }[] = [
+    { id: "download", label: t("nav_download") },
+    { id: "queue", label: t("nav_queue") },
+    { id: "convert", label: t("nav_convert") },
+    { id: "monitor", label: t("nav_monitor") },
+    { id: "history", label: t("nav_history") },
+  ]
   return (
     <div>
       <h1 className="text-[28px] font-medium tracking-[-0.04em]">{t("nav_download")}</h1>
+      <div className="mt-4 flex flex-wrap gap-1" role="tablist">
+        {tabs.map((item) => (
+          <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} className={cn("h-9 rounded-full px-4 text-[13px]", tab === item.id ? "bg-fill text-onfill" : "bg-soft text-muted")} onClick={() => go(item.id)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+      {tab === "queue" ? <div className="mt-6"><Queue /></div> : null}
+      {tab === "convert" ? <div className="mt-6"><Convert /></div> : null}
+      {tab === "monitor" ? <div className="mt-6"><Monitor /></div> : null}
+      {tab === "history" ? <div className="mt-6"><History /></div> : null}
+      {tab === "download" ? (<>
       <form
         className="mt-6 flex items-center gap-3"
         onSubmit={(event) => {
@@ -113,6 +139,7 @@ export function Download() {
           </ul>
         )}
       </section>
+      </>) : null}
     </div>
   )
 }
@@ -123,9 +150,14 @@ function JobLine({ job }: { job: Job }) {
   return (
     <li className="rounded-2xl bg-surface px-4 py-3">
       <div className="flex items-center gap-3">
+        <Thumb src={job.thumbnail} videoUrl={job.url} className="h-12 w-12 rounded-lg" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14px]">{job.title}</p>
-          <p className="mt-1 text-[12px] text-muted">{job.state === "downloading" ? `${Math.round(job.progress * 100)}%` : t(STATE_KEY[job.state])}</p>
+          <p className="mt-1 text-[12px] text-muted">
+            {job.state === "downloading" ? `${Math.round(job.progress * 100)}%` : t(STATE_KEY[job.state])}
+            {job.downloaded ? ` · ${(job.downloaded / (1024 * 1024)).toFixed(1)} MB` : ""}
+            {job.total ? ` / ${(job.total / (1024 * 1024)).toFixed(1)} MB` : ""}
+          </p>
         </div>
         {live ? (
           <button type="button" className="text-[12px] text-muted hover:text-ink" onClick={() => void jobAction(job.id, "cancel")}>
