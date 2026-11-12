@@ -3,14 +3,22 @@ import { translate, type Key } from "../lib/i18n"
 import type { Page, ToolPhase } from "../lib/types"
 import { cn } from "../lib/cn"
 import { useMusic } from "../lib/music"
-import { playTracks } from "../lib/player"
+import { playTracks, restoreSession } from "../lib/player"
 import { useLibraryTracks } from "../lib/use-library"
-import { applyUpdate, closeConfirm, dismissNotes, enqueueItems, go, runSearch, setConfig, setDraft, setSearchQuery, useApp, useT } from "../store"
+import { applyUpdate, closeConfirm, dismissNotes, go, runSearch, setDraft, setSearchQuery, useApp, useT } from "../store"
 import { ConfirmDialog, NotesDialog } from "./ui/dialog"
 import { Logo } from "./logo"
 import { NowPlaying } from "./now-playing"
 import { PlayerEngine } from "./player-engine"
 import { AiActivity } from "./ai-activity"
+import { FullscreenLyrics } from "./fullscreen-lyrics"
+import { SidePanel } from "./side-panel"
+import { Thumb } from "./thumb"
+import { closeMenus } from "../lib/menus"
+import { seedDemoMusic } from "../lib/demo-library"
+import { isTauri } from "../lib/api"
+import { useCatalogSettled } from "../lib/catalog"
+import { pressLyrics, setChrome, useChrome } from "../lib/chrome"
 
 const NAV: { id: Page; key: Key }[] = [
   { id: "home", key: "nav_home" },
@@ -76,15 +84,18 @@ function QueueRing({ progress, label }: { progress: number; label: string }) {
 }
 
 export function Shell({ children }: { children: ReactNode }) {
+  seedDemoMusic()
   const app = useApp()
   const music = useMusic()
   const tracks = useLibraryTracks()
+  const settled = useCatalogSettled()
+  const chrome = useChrome()
   const t = useT()
   const [palette, setPalette] = useState(false)
   const [paletteQuery, setPaletteQuery] = useState("")
-  const [paste, setPaste] = useState("")
   const active = app.jobs.filter((job) => job.state === "queued" || job.state === "downloading" || job.state === "scheduled" || job.state === "paused")
   const progress = active.length ? active.reduce((sum, job) => sum + (job.progress || (job.state === "downloading" ? 0.35 : 0.08)), 0) / active.length : 0
+  const ringLabel = active.length ? `${Math.round(progress * 100)}% · ${active.length}` : t("nav_download")
   const hits = tracks
     .filter((track) => `${track.title} ${track.artist}`.toLocaleLowerCase().includes(paletteQuery.trim().toLocaleLowerCase()))
     .slice(0, 8)
@@ -104,21 +115,43 @@ export function Shell({ children }: { children: ReactNode }) {
             if (!/youtu\.be|youtube\.com/i.test(url)) return
             setDraft(url)
             go("download")
-            setPaste(url)
           })
           .catch(() => {})
       }
     }
+    const onPointer = (event: PointerEvent) => {
+      const node = event.target instanceof Element ? event.target : null
+      if (node?.closest("[data-menu]")) return
+      closeMenus()
+    }
+    window.addEventListener("keydown", onKey)
+    window.addEventListener("pointerdown", onPointer)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("pointerdown", onPointer)
+    }
+  }, [])
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const field = event.target instanceof HTMLElement && (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA" || event.target.isContentEditable)
+      if (event.key === "Escape") {
+        closeMenus()
+        if (chrome.lyrics) setChrome({ lyrics: false, karaoke: false })
+      }
+      if (!field && !event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "l") {
+        event.preventDefault()
+        pressLyrics()
+      }
+    }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [])
-  function downloadPaste(audio: boolean) {
-    const url = paste
-    setPaste("")
-    setConfig(audio ? { audioOnly: true, audioFormat: "mp3" } : { audioOnly: false, container: "mp4" })
-    go("download")
-    void enqueueItems([{ url, title: url, audioOnly: audio, container: audio ? undefined : "mp4", audioFormat: audio ? "mp3" : undefined }])
-  }
+  }, [chrome.lyrics])
+  useEffect(() => {
+    restoreSession(tracks, settled || !isTauri())
+  }, [tracks, settled])
+  useEffect(() => {
+    if (app.confirm || app.showNotes) closeMenus()
+  }, [app.confirm, app.showNotes])
   return (
     <div className="flex h-full min-h-screen bg-bg text-ink">
       <aside className="hidden w-[232px] shrink-0 flex-col border-r border-line px-4 py-6 md:flex">
@@ -133,7 +166,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </nav>
         <div className="mt-auto px-3 pt-6">
           <div className="mb-2 flex items-center">
-            {active.length ? <QueueRing progress={progress} label={t("nav_queue")} /> : null}
+            {active.length ? <QueueRing progress={progress} label={ringLabel} /> : null}
             <AiActivity />
           </div>
           <ToolLine name="yt-dlp" phase={app.tools.ytdlp} />
@@ -159,33 +192,36 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
           ))}
         </nav>
-        <main className={cn("min-h-0 flex-1", app.page === "player" || app.page === "library" ? "overflow-hidden" : "overflow-auto")}>
-          {app.page === "player" || app.page === "library" ? (
-            <div key={app.page} className="animate-rise h-full">
-              {children}
-            </div>
-          ) : app.page === "home" || app.page === "discover" || app.page === "download" || app.page === "likes" || app.page === "playlists" ? (
-            <div key={app.page} className="animate-rise px-6 py-8 md:px-8">
-              {children}
-            </div>
-          ) : (
-            <div key={app.page} className="animate-rise max-w-[760px] px-8 py-10 md:px-12">
-              {children}
-            </div>
-          )}
-        </main>
-        {app.page === "player" ? null : <NowPlaying />}
+        <div className="flex min-h-0 flex-1">
+          <main className={cn("min-h-0 min-w-0 flex-1", app.page === "player" || app.page === "library" ? "overflow-hidden" : "overflow-auto")}>
+            {app.page === "player" || app.page === "library" ? (
+              <div key={app.page} className="animate-rise h-full">
+                {children}
+              </div>
+            ) : app.page === "home" || app.page === "discover" || app.page === "download" || app.page === "likes" || app.page === "playlists" || app.page === "settings" || app.page === "queue" || app.page === "convert" || app.page === "monitor" || app.page === "history" || app.page === "search" ? (
+              <div key={app.page} className="animate-rise px-6 py-8 md:px-8">
+                {children}
+              </div>
+            ) : (
+              <div key={app.page} className="animate-rise max-w-[760px] px-8 py-10 md:px-12">
+                {children}
+              </div>
+            )}
+          </main>
+          {chrome.lyrics ? null : <SidePanel />}
+        </div>
+        {app.page === "player" || chrome.lyrics ? null : <NowPlaying />}
       </div>
       <PlayerEngine />
       {app.updateOffer ? (
-        <div className={cn("fixed left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill", app.page === "player" ? "bottom-6" : "bottom-24")}>
+        <div className="fixed bottom-[108px] left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill">
           <span>{t("update_ready", { version: app.updateVersion })}</span>
           <button type="button" className="underline" onClick={() => void applyUpdate()}>
             {t("update_install")}
           </button>
         </div>
       ) : app.toast ? (
-        <div className={cn("pointer-events-none fixed left-1/2 z-30 -translate-x-1/2 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill", app.page === "player" ? "bottom-6" : "bottom-24")}>
+        <div className="pointer-events-none fixed bottom-[108px] left-1/2 z-30 -translate-x-1/2 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill">
           {app.toast}
         </div>
       ) : null}
@@ -225,12 +261,13 @@ export function Shell({ children }: { children: ReactNode }) {
                 <li key={track.path}>
                   <button
                     type="button"
-                    className="flex h-12 w-full items-center rounded-xl px-3 text-left hover:bg-soft"
+                    className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-left hover:bg-soft"
                     onClick={() => {
                       playTracks([track], 0)
                       setPalette(false)
                     }}
                   >
+                    <Thumb src={track.thumbnail} videoUrl={track.pageUrl || track.title} className="h-8 w-8 rounded-md" />
                     <span className="truncate text-[14px]">{track.title}</span>
                     <span className="ml-3 truncate text-[12px] text-muted">{track.artist}</span>
                   </button>
@@ -254,17 +291,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </div>
       ) : null}
-      {paste ? (
-        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full bg-fill px-4 py-2 text-[13px] text-onfill">
-          <span>{t("paste_found")}</span>
-          <button type="button" className="underline" onClick={() => downloadPaste(true)}>
-            {t("paste_mp3")}
-          </button>
-          <button type="button" className="underline" onClick={() => downloadPaste(false)}>
-            {t("paste_mp4")}
-          </button>
-        </div>
-      ) : null}
+      <FullscreenLyrics />
     </div>
   )
 }

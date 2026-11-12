@@ -106,11 +106,11 @@ export function Discover() {
       </div>
       {note ? <p className="mt-4 text-[13px] text-muted">{note}</p> : null}
       <section className="mt-10">
-        <h2 className="text-[22px] font-medium tracking-[-0.03em]">{t("discover_suggest")}</h2>
+        <h2 className="text-[22px] font-medium tracking-[-0.03em]">{t("discover_for_you")}</h2>
         {ideas.length === 0 ? (
           <p className="mt-4 max-w-[420px] text-[15px] leading-relaxed text-muted">{t("discover_none")}</p>
         ) : (
-          <div className="home-grid mt-4">
+          <div className="home-row mt-4">
             {ideas.map((item) => (
               <article key={item.path} className="rounded-2xl bg-soft p-3">
                 <Thumb src={item.thumbnail} videoUrl={item.pageUrl || item.title} className="aspect-square w-full rounded-xl" />

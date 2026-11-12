@@ -1,5 +1,5 @@
 import type { Track } from "./library"
-import { getMusic, hear, toggleLike, touchRecent } from "./music"
+import { addToPlaylist, createPlaylist, getMusic, hear, rememberSession, toggleLike, touchRecent } from "./music"
 
 const ARTISTS = ["Low Roar", "Nils Frahm", "Agnes Obel", "Ólafur Arnalds", "Bon Iver", "Fleet Foxes", "José González", "Feist"]
 const TITLES = ["I'll Keep Coming", "Says", "Familiar", "Near Light", "Holocene", "Mykonos", "Heartbeats", "Mushaboom", "Open", "Softly"]
@@ -8,7 +8,7 @@ const SWATCH = ["#c4a574", "#7f9c96", "#8d7aa8", "#c47c6a", "#6f8fbf", "#b7a15a"
 
 function coverSwatch(index: number) {
   const color = SWATCH[index % SWATCH.length]
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="${color}"/><circle cx="58" cy="22" r="14" fill="#ffffff" fill-opacity="0.28"/></svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="${color}"/><path d="M34 56V24l22-6v28" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/><circle cx="30" cy="56" r="6" fill="#fff"/><circle cx="52" cy="46" r="6" fill="#fff"/></svg>`
   return `data:image/svg+xml,${encodeURIComponent(svg)}`
 }
 
@@ -44,6 +44,19 @@ export function seedDemoMusic() {
   const tracks = makeDemoLibrary()
   if (!music.recent.length) for (const track of tracks.slice(0, 6)) touchRecent(track.path)
   if (!music.likes.length) for (const track of tracks.slice(0, 4)) toggleLike(track.path)
+  if (!music.playlists.length) {
+    const id = createPlaylist("Noite")
+    for (const track of tracks.slice(1, 6)) addToPlaylist(id, track.path)
+  }
+  if (!music.session?.paths.length) {
+    rememberSession({
+      paths: tracks.slice(0, 6).map((track) => track.path),
+      index: 0,
+      position: 4,
+      shuffle: false,
+      repeat: "off",
+    })
+  }
   if (!music.events.length) {
     const now = Date.now()
     tracks.slice(0, 8).forEach((track, index) => {

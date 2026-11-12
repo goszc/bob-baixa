@@ -4,7 +4,7 @@ import { Thumb } from "../components/thumb"
 import { Button } from "../components/ui/button"
 import { Input } from "../components/ui/input"
 import { formatClock } from "../lib/format"
-import { enqueueHit, runSearch, setField, useApp, useT } from "../store"
+import { enqueueHit, runSearch, setConfig, setField, useApp, useT } from "../store"
 
 export function Search() {
   const app = useApp()
@@ -28,6 +28,16 @@ export function Search() {
           {app.busy === "search" ? t("searching") : t("search_btn")}
         </Button>
       </form>
+      <div className="mt-4">
+        <Segmented
+          value={app.config.audioOnly ? "mp3" : "mp4"}
+          onChange={(value) => setConfig(value === "mp3" ? { audioOnly: true, audioFormat: "mp3" } : { audioOnly: false, container: "mp4" })}
+          options={[
+            { value: "mp3", label: "MP3" },
+            { value: "mp4", label: "MP4" },
+          ]}
+        />
+      </div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-[14px]">{t("search_format")}</p>

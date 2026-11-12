@@ -1,4 +1,6 @@
 import type { ReactNode } from "react"
+import { PanelRight, Quote } from "lucide-react"
+import { pressLyrics, togglePanel, useChrome } from "../lib/chrome"
 import { formatClock } from "../lib/format"
 import { trackKey } from "../lib/library"
 import { toggleLike, useMusic } from "../lib/music"
@@ -40,6 +42,7 @@ function RoundButton({
 
 export function NowPlaying() {
   const player = usePlayer()
+  const chrome = useChrome()
   const music = useMusic()
   const t = useT()
   const track = player.queue[player.index]
@@ -90,6 +93,15 @@ export function NowPlaying() {
             <IconNext className="h-4 w-4" />
           </RoundButton>
         </div>
+        <button
+          type="button"
+          aria-label={t("player_lyrics")}
+          title={`${t("player_lyrics")} (L)`}
+          className={cn("inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-soft", player.lyrics?.lines.length ? "text-ink" : "text-muted/45")}
+          onClick={pressLyrics}
+        >
+          <Quote className="h-4 w-4" />
+        </button>
         <div className="flex w-[132px] shrink-0 items-center gap-1">
           <button
             type="button"
@@ -104,6 +116,16 @@ export function NowPlaying() {
             <Scrubber value={player.muted ? 0 : player.volume} max={1} label={t("player_volume")} onChange={setVolume} />
           </div>
         </div>
+        <button
+          type="button"
+          aria-label={chrome.open ? t("panel_collapse") : t("panel_expand")}
+          aria-pressed={chrome.open}
+          title={chrome.open ? t("panel_collapse") : t("panel_expand")}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted hover:bg-soft hover:text-ink"
+          onClick={togglePanel}
+        >
+          <PanelRight className="h-4 w-4" />
+        </button>
         <span className="hidden w-16 text-right text-[12px] tabular-nums text-muted sm:block">
           {idle ? "" : formatClock(player.currentTime)}
         </span>

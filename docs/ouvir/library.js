@@ -163,8 +163,7 @@ export function coverPlaceholder(track) {
   let hash = 0
   for (const ch of label) hash = (hash * 33 + ch.charCodeAt(0)) >>> 0
   const hue = [18, 28, 152, 188, 210, 262, 330, 48][hash % 8]
-  const letter = (text(track?.title) || text(track?.artist) || "•").slice(0, 1).toUpperCase()
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="hsl(${hue} 34% 42%)"/><circle cx="58" cy="20" r="14" fill="#fff" fill-opacity=".22"/><text x="40" y="50" text-anchor="middle" font-family="Georgia,serif" font-size="28" fill="#fff">${letter}</text></svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="hsl(${hue} 34% 42%)"/><path d="M34 56V24l22-6v28" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/><circle cx="30" cy="56" r="6" fill="#fff"/><circle cx="52" cy="46" r="6" fill="#fff"/></svg>`
   return `data:image/svg+xml,${encodeURIComponent(svg)}`
 }
 

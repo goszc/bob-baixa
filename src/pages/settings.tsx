@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { PageHeader } from "../components/page-header"
 import { Segmented } from "../components/segmented"
 import { Button } from "../components/ui/button"
@@ -9,7 +9,10 @@ import type { Key } from "../lib/i18n"
 import { cn } from "../lib/cn"
 import { invoke, isTauri } from "../lib/api"
 import type { CookiesBrowser, Lang, ThemeMode } from "../lib/types"
-import { checkUpdates, go, makeDiagnostic, measureLibrary, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
+import { checkUpdates, makeDiagnostic, measureLibrary, openNotes, pickFolder, reinstallTools, setConfig, updateYtDlp, useApp, useT } from "../store"
+
+type SettingsArea = "geral" | "downloads" | "lyrics" | "storage" | "integrations"
+const AreaContext = createContext<SettingsArea>("geral")
 
 const CATS: { id: string; key: Key }[] = [
   { id: "sponsor", key: "cat_sponsor" },
@@ -28,17 +31,27 @@ export function Settings() {
   const app = useApp()
   const t = useT()
   const config = app.config
+  const [area, setArea] = useState<SettingsArea>("geral")
+  const areas: { id: SettingsArea; label: string }[] = [
+    { id: "geral", label: t("settings_general") },
+    { id: "downloads", label: t("settings_downloads") },
+    { id: "lyrics", label: t("settings_lyrics_ai") },
+    { id: "storage", label: t("settings_storage") },
+    { id: "integrations", label: t("settings_integrations") },
+  ]
   return (
-    <div>
-      <PageHeader title={t("settings_title")} sub={t("settings_sub")} />
-      <div className="mb-6 flex flex-wrap gap-2">
-        {(["queue", "convert", "monitor", "history"] as const).map((id) => (
-          <button key={id} type="button" className="h-8 rounded-full bg-soft px-3 text-[13px] text-muted hover:text-ink" onClick={() => go(id)}>
-            {t(id === "queue" ? "nav_queue" : id === "convert" ? "nav_convert" : id === "monitor" ? "nav_monitor" : "nav_history")}
+    <AreaContext.Provider value={area}>
+    <div className="flex gap-8">
+      <nav className="w-44 shrink-0" aria-label={t("nav_settings")}>
+        {areas.map((item) => (
+          <button key={item.id} type="button" className={cn("mb-1 block h-10 w-full rounded-lg px-3 text-left text-[14px]", area === item.id ? "bg-soft font-medium text-ink" : "text-muted hover:bg-soft hover:text-ink")} onClick={() => setArea(item.id)}>
+            {item.label}
           </button>
         ))}
-      </div>
-      <Section title={t("appearance")} first>
+      </nav>
+      <div className="min-w-0 flex-1">
+      <PageHeader title={t("settings_title")} sub={t("settings_sub")} />
+      <Section title={t("appearance")} area="geral" first>
         <div className="border-b border-line py-4">
           <div className="flex items-start justify-between gap-6">
             <div className="max-w-[240px]">
@@ -59,7 +72,7 @@ export function Settings() {
           />
         </Row>
       </Section>
-      <Section title={t("destination")}>
+      <Section title={t("destination")} area="downloads">
         <Row label={t("folder")}>
           <div className="flex gap-2">
             <Input readOnly className="w-[240px]" value={config.outputDir} placeholder="Downloads/bob baixa" />
@@ -68,13 +81,13 @@ export function Settings() {
             </Button>
           </div>
         </Row>
-        <div className="border-b border-line py-4">
-          <div className="text-[14px]">{t("filename")}</div>
+        <details className="border-b border-line py-4">
+          <summary className="cursor-pointer text-[14px]">{t("settings_advanced")}</summary>
           <p className="mt-1 text-[13px] text-muted">{t("filename_hint")}</p>
           <Input className="mt-3" value={config.filenameTemplate} onChange={(event) => setConfig({ filenameTemplate: event.target.value })} />
-        </div>
+        </details>
       </Section>
-      <Section title={t("queue_settings")}>
+      <Section title={t("queue_settings")} area="downloads">
         <Row label={t("parallel")} hint={t("parallel_hint")}>
           <Segmented
             value={String(config.parallel)}
@@ -101,7 +114,7 @@ export function Settings() {
           <Switch label={t("context_menu")} checked={config.contextMenu} onCheckedChange={(value) => setConfig({ contextMenu: value })} />
         </Row>
       </Section>
-      <Section title={t("subs_extras")}>
+      <Section title={t("subs_extras")} area="downloads">
         <Row label={t("subs")}>
           <Switch label={t("subs")} checked={config.subtitles} onCheckedChange={(value) => setConfig({ subtitles: value })} />
         </Row>
@@ -121,7 +134,7 @@ export function Settings() {
           <Switch label={t("embed_chapters")} checked={config.embedChapters} onCheckedChange={(value) => setConfig({ embedChapters: value })} />
         </Row>
       </Section>
-      <Section title={t("sponsor")}>
+      <Section title={t("sponsor")} area="downloads">
         <Row label={t("sponsor")} hint={t("sponsor_help")}>
           <Switch label={t("sponsor")} checked={config.sponsorblock} onCheckedChange={(value) => setConfig({ sponsorblock: value })} />
         </Row>
@@ -148,7 +161,7 @@ export function Settings() {
           })}
         </div>
       </Section>
-      <Section title={t("cookies")}>
+      <Section title={t("cookies")} area="downloads">
         <Row label={t("cookies")} hint={t("cookies_help")}>
           <div className="w-[180px]">
             <Select value={config.cookiesBrowser} onChange={(event) => setConfig({ cookiesBrowser: event.target.value as CookiesBrowser })}>
@@ -161,10 +174,10 @@ export function Settings() {
           </div>
         </Row>
       </Section>
-      <Section title={t("tools")}>
+      <Section title={t("tools")} area="storage">
         <p className="py-3 text-[13px] leading-relaxed text-muted">{t("tools_hint")}</p>
         <p className="pb-3 text-[13px] text-muted">
-          bob baixa · {app.tools.appVersion ?? "0.6.7"}
+          bob baixa · {app.tools.appVersion ?? "0.6.8"}
           <br />
           yt-dlp {app.tools.ytdlpVersion ? `· ${app.tools.ytdlpVersion}` : `· ${t("tools_missing")}`}
           <br />
@@ -202,17 +215,17 @@ export function Settings() {
       </Section>
       <LibrarySection />
       <DriveSection />
-      <Section title={t("settings_gemini")}>
+      <Section title={t("settings_gemini")} area="lyrics">
         <DriveExtras />
       </Section>
-      <Section title={t("settings_discord")}>
+      <Section title={t("settings_discord")} area="integrations">
         <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_discord_hint")}</p>
         <Row label={t("settings_discord")}>
           <Switch label={t("settings_discord")} checked={config.discord} onCheckedChange={(value) => setConfig({ discord: value })} />
         </Row>
         <Input className="mt-3" value={config.discordClientId} placeholder={t("settings_discord_id")} onChange={(event) => setConfig({ discordClientId: event.target.value })} />
       </Section>
-      <Section title={t("about")}>
+      <Section title={t("about")} area="geral">
         <p className="py-3 text-[14px]">bob baixa · {t("version")}</p>
         <div className="pb-4">
           <Button variant="outline" onClick={openNotes}>
@@ -222,7 +235,9 @@ export function Settings() {
         <p className="max-w-[52ch] pb-2 text-[13px] leading-relaxed text-muted">{t("extension_hint")}</p>
         <p className="max-w-[52ch] pb-4 text-[13px] leading-relaxed text-muted">{t("protocol")}</p>
       </Section>
+      </div>
     </div>
+    </AreaContext.Provider>
   )
 }
 
@@ -232,7 +247,7 @@ function LibrarySection() {
   const config = app.config
   return (
     <>
-      <Section title={t("settings_acoustid")}>
+      <Section title={t("settings_acoustid")} area="lyrics">
         <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_acoustid_hint")}</p>
         <Input value={config.acoustidKey} onChange={(event) => setConfig({ acoustidKey: event.target.value })} placeholder="acoustid" />
         <div className="mt-4">
@@ -250,7 +265,7 @@ function LibrarySection() {
           </div>
         </div>
       </Section>
-      <Section title={t("settings_hotkeys")}>
+      <Section title={t("settings_hotkeys")} area="geral">
         <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_hotkeys_hint")}</p>
         <Hotkey label={t("settings_hotkey_play")} value={config.hotkeyPlay} onChange={(hotkeyPlay) => setConfig({ hotkeyPlay })} />
         <Hotkey label={t("settings_hotkey_next")} value={config.hotkeyNext} onChange={(hotkeyNext) => setConfig({ hotkeyNext })} />
@@ -313,7 +328,7 @@ function DriveSection() {
   const built = typeof __BOB_DRIVE__ !== "undefined" && __BOB_DRIVE__
   if (!built && !status?.enabled) return null
   return (
-    <Section title={t("settings_drive")}>
+    <Section title={t("settings_drive")} area="integrations">
       <p className="py-3 text-[13px] leading-relaxed text-muted">{t("settings_drive_hint")}</p>
       <p className="pb-3 text-[13px] text-muted">
         {status?.connected ? `${t("settings_drive_connected")}${status.email ? ` · ${status.email}` : ""}` : ""}
@@ -623,7 +638,9 @@ function ThemePicker({
   )
 }
 
-function Section({ title, first, children }: { title: string; first?: boolean; children: ReactNode }) {
+function Section({ title, first, area = "geral", children }: { title: string; first?: boolean; area?: SettingsArea; children: ReactNode }) {
+  const current = useContext(AreaContext)
+  if (current !== area) return null
   return (
     <section className={first ? "" : "mt-10"}>
       <h2 className="mb-1 text-[13px] text-muted">{title}</h2>

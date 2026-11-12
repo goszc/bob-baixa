@@ -207,7 +207,10 @@
       #lyric button .said { color: var(--ink); }
       #lyric button[aria-current="true"] .said { color: var(--ink); }
       #queue button { border-top: 1px solid var(--line); }
-      .handle { width: 18px; color: var(--muted); }
+      .handle { margin-left: auto; width: 28px; text-align: right; color: var(--muted); }
+      #likes button.row, #list .pin { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 4px; border: 0; background: transparent; color: var(--ink); text-align: left; }
+      #discover-rows { margin-top: 20px; }
+      button[hidden] { display: none; }
       #mini {
         position: fixed; z-index: 20; left: 12px; right: 12px;
         bottom: calc(68px + env(safe-area-inset-bottom));
@@ -269,7 +272,7 @@
     <main>
       <header>
         <h1>bob baixa</h1>
-        <button id="version" type="button">0.6.7</button>
+        <button id="version" type="button">0.6.8</button>
       </header>
       <p class="err" id="err" role="status"></p>
       <section id="gate">
@@ -283,11 +286,12 @@
       <section id="player">
         <nav class="tabs-bar" aria-label="seções">
           <button type="button" data-view="home" aria-current="page" aria-label="Início"><span data-ico="home"></span>Início</button>
-          <button type="button" data-view="likes" aria-label="Curtidas"><span data-ico="heart"></span>Curtidas <span id="like-count" class="count">0</span></button>
+          <button type="button" data-view="search" aria-label="Buscar"><span data-ico="search"></span>Buscar</button>
           <button type="button" data-view="library" aria-label="Biblioteca"><span data-ico="library"></span>Biblioteca</button>
-          <button type="button" data-view="discover" aria-label="Descobrir"><span data-ico="discover"></span>Descobrir</button>
-          <button type="button" data-view="download" aria-label="Baixar"><span data-ico="download"></span>Baixar</button>
-          <button type="button" data-view="playlists" aria-label="Playlists"><span data-ico="list"></span>Playlists</button>
+          <button type="button" data-view="likes" hidden aria-label="Curtidas"><span data-ico="heart"></span>Curtidas <span id="like-count" class="count">0</span></button>
+          <button type="button" data-view="discover" hidden aria-label="Descobrir"><span data-ico="discover"></span>Descobrir</button>
+          <button type="button" data-view="download" hidden aria-label="Baixar"><span data-ico="download"></span>Baixar</button>
+          <button type="button" data-view="playlists" hidden aria-label="Playlists"><span data-ico="list"></span>Playlists</button>
         </nav>
         <div id="pull" aria-hidden="true"></div>
         <section id="home" aria-label="início"></section>
@@ -299,7 +303,7 @@
             <button type="button" id="fmt-mp3" aria-pressed="true">MP3</button>
             <button type="button" id="fmt-mp4" aria-pressed="false">MP4</button>
           </div>
-          <button class="go" id="link-go" type="button" style="margin-top:12px">Baixar</button>
+          <button class="go" id="link-go" type="button" style="margin-top:12px;width:100%">Baixar</button>
           <p id="link-note" class="lead"></p>
         </section>
         <section id="discover" hidden aria-label="descobrir">
@@ -309,6 +313,7 @@
             <button type="button" id="discover-mix">Descobrir mix</button>
           </div>
           <p id="discover-note" class="lead"></p>
+          <div id="discover-rows"></div>
         </section>
         <section id="library" hidden aria-label="biblioteca">
           <div class="segments" role="tablist" aria-label="biblioteca">
@@ -349,6 +354,7 @@
           </div>
           <input id="seek" type="range" min="0" max="1000" value="0" aria-label="posição" />
           <div class="time" id="time"><span>0:00</span><span>0:00</span></div>
+          <input id="volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="volume" />
           <div class="tabs" role="tablist" aria-label="faixa">
             <button type="button" data-tab="queue" role="tab" aria-selected="false">Fila</button>
             <button type="button" data-tab="lyrics" role="tab" aria-selected="false">Letra</button>
@@ -364,6 +370,7 @@
             <div id="mini-artist"></div>
           </div>
           <button id="mini-toggle" type="button" aria-label="tocar ou pausar"></button>
+          <button id="mini-next" type="button" aria-label="próxima"></button>
         </div>
         <div id="debug" hidden></div>
       </section>

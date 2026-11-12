@@ -23,6 +23,7 @@ import { invoke, isTauri } from "../lib/api"
 import { runAi } from "../lib/ai-activity"
 import { playTracks, queueTracks, rememberLibrary } from "../lib/player"
 import { go, requestDeleteTrack, useT } from "../store"
+import { weekPaths } from "../lib/week"
 import { cn } from "../lib/cn"
 import { CarePanel, MixList } from "./library-care"
 import { Retrospective } from "./retrospective"
@@ -36,10 +37,9 @@ const MAIN: { value: LibraryView; key: "player_tracks" | "player_artists" | "pla
   { value: "playlists", key: "player_playlists" },
 ]
 
-const MORE: { value: LibraryView; key: "player_mix" | "player_folders" | "player_likes" | "player_recent" | "player_care" | "player_retro" }[] = [
+const MORE: { value: LibraryView; key: "player_mix" | "player_folders" | "player_recent" | "player_care" | "player_retro" }[] = [
   { value: "mix", key: "player_mix" },
   { value: "folders", key: "player_folders" },
-  { value: "likes", key: "player_likes" },
   { value: "recent", key: "player_recent" },
   { value: "care", key: "player_care" },
   { value: "retro", key: "player_retro" },
@@ -195,7 +195,7 @@ export function LibraryPanel({
               <Ellipsis className="h-4 w-4" />
             </button>
             {more ? (
-              <div className="absolute right-0 z-20 mt-1 w-40 rounded-xl border border-line bg-surface p-1 shadow-sm">
+              <div data-menu="library-more" className="absolute right-0 z-20 mt-1 w-44 rounded-xl border border-line bg-surface p-1 shadow-sm whitespace-nowrap">
                 <button
                   type="button"
                   aria-label={t("density_toggle")}
@@ -351,11 +351,16 @@ export function LibraryPanel({
               }}
             >
               <Input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("player_playlist_name")} className="h-9" />
-              <button type="submit" aria-label={t("player_new_playlist")} title={t("player_new_playlist")} className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-fill text-[16px] text-onfill">
-                +
+              <button type="submit" className="h-9 shrink-0 rounded-full bg-fill px-3 text-[13px] text-onfill">
+                {t("player_new_playlist")}
               </button>
             </form>
-            {music.playlists.length === 0 ? <p className="px-1 py-6 text-[14px] text-muted">{t("player_no_playlists")}</p> : null}
+            {tracksForPaths(weekPaths(music.events), tracks).length ? (
+              <button type="button" className="flex h-14 w-full items-center justify-between text-left hover:bg-soft" onClick={() => play(tracksForPaths(weekPaths(music.events), tracks), 0)}>
+                <span className="truncate px-1 text-[14px]">{t("home_weekly")}</span>
+              </button>
+            ) : null}
+            {music.playlists.length === 0 && tracksForPaths(weekPaths(music.events), tracks).length === 0 ? <p className="px-1 py-6 text-[14px] text-muted">{t("player_no_playlists")}</p> : null}
             {music.playlists.map((playlist) => (
               <button key={playlist.id} type="button" className="flex h-14 w-full items-center justify-between text-left hover:bg-soft" onClick={() => setPlaylistId(playlist.id)}>
                 <span className="truncate px-1 text-[14px]">{playlist.name}</span>
@@ -449,22 +454,20 @@ function TrackRow({
   const t = useT()
   const music = useMusic()
   const [open, setOpen] = useState(false)
+  const [pick, setPick] = useState(false)
   const [box, setBox] = useState<{ left: number; top: number } | null>(null)
   const loved = music.likes.includes(trackKey(track.path))
   function place(event: { clientX: number; clientY: number; preventDefault: () => void }) {
     event.preventDefault()
     const width = 220
-    const height = 248
-    setBox({
-      left: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
-      top: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
-    })
+    const height = 280
+    const bar = 108
+    const left = Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8))
+    const below = event.clientY
+    const top = below + height > window.innerHeight - bar ? Math.max(8, below - height) : below
+    setBox({ left, top })
     setOpen(true)
-  }
-  function addSomewhere() {
-    const id = music.playlists[0]?.id || createPlaylist("Minhas")
-    if (id) addToPlaylist(id, track.path)
-    setOpen(false)
+    setPick(false)
   }
   return (
     <div className="group flex h-full items-center gap-1 pr-2" onContextMenu={place}>
@@ -492,12 +495,25 @@ function TrackRow({
         <Ellipsis className="h-4 w-4" />
       </button>
       {open && box ? (
-        <div className="fixed z-30 w-[220px] rounded-xl border border-line bg-surface p-1 shadow-sm" style={{ left: box.left, top: box.top }} role="menu">
+        <div data-menu="track" className="fixed z-30 w-[220px] rounded-xl border border-line bg-surface p-1 shadow-sm" style={{ left: box.left, top: box.top }} role="menu">
           <MenuItem label={t("player_play_next")} onClick={() => { queueTracks([track], "next"); setOpen(false) }} />
           <MenuItem label={t("player_add_queue")} onClick={() => { queueTracks([track], "end"); setOpen(false) }} />
           <MenuItem label={t("player_radio_play")} onClick={() => { onRadio(); setOpen(false) }} />
           <MenuItem label={loved ? t("player_unlike") : t("player_like")} onClick={() => { toggleLike(track.path); setOpen(false) }} />
-          <MenuItem label={t("player_add_to_playlist")} onClick={addSomewhere} />
+          <MenuItem label={t("player_add_to_playlist")} onClick={() => setPick((value) => !value)} />
+          {pick ? (
+            <div className="px-2 py-1">
+              {music.playlists.length === 0 ? <p className="px-1 py-1 text-[12px] text-muted">{t("player_no_playlists")}</p> : null}
+              {music.playlists.map((playlist) => (
+                <button key={playlist.id} type="button" className="block w-full rounded-lg px-2 py-1.5 text-left text-[13px] hover:bg-soft" onClick={() => { addToPlaylist(playlist.id, track.path); setOpen(false) }}>
+                  {playlist.name}
+                </button>
+              ))}
+              <button type="button" className="block w-full rounded-lg px-2 py-1.5 text-left text-[13px] hover:bg-soft" onClick={() => { const id = createPlaylist(t("player_new_playlist")); if (id) addToPlaylist(id, track.path); setOpen(false) }}>
+                {t("player_new_playlist")}
+              </button>
+            </div>
+          ) : null}
           <MenuItem label={t("delete_track")} onClick={() => { requestDeleteTrack(track.path, track.title); setOpen(false) }} />
         </div>
       ) : null}

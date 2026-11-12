@@ -73,6 +73,8 @@ function icon(name, filled) {
 function paintIcons() {
   document.querySelector("#prev").innerHTML = icon("prev")
   document.querySelector("#next").innerHTML = icon("next")
+  const miniNext = document.querySelector("#mini-next")
+  if (miniNext) miniNext.innerHTML = icon("next")
   document.querySelector("#shuffle").innerHTML = icon("shuffle")
   document.querySelector("#repeat").innerHTML = icon("repeat")
   document.querySelector("#like").innerHTML = icon("heart")
@@ -156,6 +158,12 @@ function wire() {
     pulse()
     toggle()
   })
+  document.querySelector("#mini-next")?.addEventListener("click", () => step(1))
+  document.querySelector("#volume")?.addEventListener("input", (event) => {
+    const value = Number(event.target.value)
+    audio.volume = value
+    if (video) video.volume = value
+  })
   let phoneFormat = localStorage.getItem("bob-format") === "mp4" ? "mp4" : "mp3"
   const paintFormat = () => {
     document.querySelector("#fmt-mp3")?.setAttribute("aria-pressed", phoneFormat === "mp3" ? "true" : "false")
@@ -197,17 +205,19 @@ function wire() {
       view = button.dataset.view
       for (const item of document.querySelectorAll("[data-view]")) item.removeAttribute("aria-current")
       button.setAttribute("aria-current", "page")
-      const libraryView = view === "library" || view === "playlists"
+      const libraryView = view === "library" || view === "playlists" || view === "search"
       document.querySelector("#home").hidden = view !== "home"
       document.querySelector("#library").hidden = !libraryView
       document.querySelector("#likes").hidden = view !== "likes"
       document.querySelector("#discover").hidden = view !== "discover"
       document.querySelector("#download").hidden = view !== "download"
       if (view === "playlists") segment = "playlists"
-      if (view === "library") segment = "tracks"
+      if (view === "library" || view === "search") segment = "tracks"
+      if (view === "search") document.querySelector("#search")?.focus()
       for (const item of document.querySelectorAll("[data-seg]")) item.setAttribute("aria-selected", item.dataset.seg === segment ? "true" : "false")
       if (view === "home") renderHome()
       else if (view === "likes") renderLikes()
+      else if (view === "discover") renderDiscover()
       else if (libraryView) renderLibrary()
     })
   }
@@ -240,6 +250,7 @@ function wire() {
 
 function selectTab(next) {
   tab = next
+  try { sessionStorage.setItem("bob-sheet-tab", next) } catch { /* private mode */ }
   for (const item of document.querySelectorAll("[data-tab]")) item.setAttribute("aria-selected", item.dataset.tab === next ? "true" : "false")
   document.querySelector("#lyric").hidden = next !== "lyrics"
   document.querySelector("#queue").hidden = next !== "queue"
@@ -271,6 +282,9 @@ function endDrag(event) {
 
 function openSheet() {
   document.body.classList.add("sheet")
+  let saved = "lyrics"
+  try { saved = sessionStorage.getItem("bob-sheet-tab") || "lyrics" } catch { /* private mode */ }
+  selectTab(saved === "queue" ? "queue" : "lyrics")
 }
 
 function closeSheet() {
@@ -570,6 +584,30 @@ function paintLikeCount() {
   if (node) node.textContent = String(lovedTracks().length)
 }
 
+function renderDiscover() {
+  const box = document.querySelector("#discover-rows")
+  if (!box) return
+  box.innerHTML = ""
+  const title = document.createElement("h2")
+  title.textContent = "para você"
+  const rail = document.createElement("div")
+  rail.className = "rail"
+  tracks.slice(0, 8).forEach((track) => {
+    const button = document.createElement("button")
+    button.type = "button"
+    button.append(coverImage(track))
+    const name = document.createElement("strong")
+    name.textContent = track.title
+    button.append(name)
+    button.addEventListener("click", () => {
+      visible = tracks
+      play(tracks.indexOf(track))
+    })
+    rail.append(button)
+  })
+  box.append(title, rail)
+}
+
 function renderLikes() {
   const box = document.querySelector("#likes")
   box.innerHTML = ""
@@ -586,12 +624,19 @@ function renderLikes() {
     box.append(empty, action)
     return
   }
+  const jump = document.createElement("button")
+  jump.type = "button"
+  jump.className = "go"
+  jump.textContent = "Descobrir"
+  jump.addEventListener("click", () => document.querySelector('[data-view="discover"]')?.dispatchEvent(new Event("click")))
+  box.append(jump)
   for (const track of loved) {
-    const button = document.createElement("button")
-    button.type = "button"
-    button.className = "row"
-    button.textContent = `${track.artist} — ${track.title}`
-    button.addEventListener("click", () => play(tracks.indexOf(track)))
+    const button = trackButton(track)
+    button.classList.add("row")
+    button.addEventListener("click", () => {
+      visible = loved
+      play(loved.indexOf(track))
+    })
     box.append(button)
   }
 }
@@ -643,6 +688,27 @@ function renderLibrary() {
     if (!rows.length) {
       list.append(plainItem(tracks.length ? "nada com esse nome." : "nenhuma faixa."))
       return
+    }
+    if (!query && segment === "tracks" && !openedGroup) {
+      const pin = document.createElement("li")
+      const card = document.createElement("button")
+      card.type = "button"
+      card.className = "pin"
+      card.textContent = "Curtidas"
+      card.addEventListener("click", () => document.querySelector('[data-view="likes"]')?.dispatchEvent(new Event("click")))
+      pin.append(card)
+      const find = document.createElement("button")
+      find.type = "button"
+      find.className = "pin"
+      find.textContent = "Descobrir"
+      find.addEventListener("click", () => document.querySelector('[data-view="discover"]')?.dispatchEvent(new Event("click")))
+      const down = document.createElement("button")
+      down.type = "button"
+      down.className = "pin"
+      down.textContent = "Baixar"
+      down.addEventListener("click", () => document.querySelector('[data-view="download"]')?.dispatchEvent(new Event("click")))
+      pin.append(find, down)
+      list.append(pin)
     }
     rows.forEach((track, trackIndex) => {
       const item = document.createElement("li")
@@ -1097,6 +1163,14 @@ function showLyrics(track, time) {
   box.innerHTML = ""
   if (!lines.length) {
     if (track?.lyricsId && track.lyricsId !== track.coverId && !track.lyrics) void loadLyricFile(track)
+    const empty = document.createElement("p")
+    empty.className = "lead"
+    empty.textContent = "letra indisponível"
+    const action = document.createElement("button")
+    action.type = "button"
+    action.className = "go"
+    action.textContent = "buscar letra"
+    box.append(empty, action)
     return
   }
   lines.forEach((line, lineIndex) => {

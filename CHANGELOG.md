@@ -1,5 +1,14 @@
 # changelog
 
+## 0.6.8
+
+- Painel direito em toda página, com Fila, Letra e Biblioteca, aberto por padrão e com a largura lembrada.
+- Botão de letra na barra de baixo e letra em tela cheia no estilo Apple Music, com transporte sempre visível.
+- Um menu por vez. Modo cinema só para vídeo, com Música/Vídeo, sem persistir entre sessões.
+- Configurações em categorias. Fila de download, converter, monitor e histórico viram abas de Baixar.
+- Biblioteca e curtidas em tabela. Playlist com página própria.
+- Celular com Início, Buscar e Biblioteca. A folha agora abre na letra.
+
 ## 0.6.7
 
 - descobrir música baixa uma faixa no formato padrão. descobrir mix cria uma playlist com 10 vídeos em 480p, a partir do que toca e do que mais toca

@@ -175,6 +175,8 @@ html.glass.dark aside {
   overflow-x: auto;
   padding-bottom: 4px;
   scroll-snap-type: x mandatory;
+  scroll-padding-inline: 8px;
+  mask-image: linear-gradient(90deg, transparent 0, #000 28px, #000 calc(100% - 48px), transparent);
 }
 
 .home-row > * {
