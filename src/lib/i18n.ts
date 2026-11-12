@@ -501,6 +501,8 @@ const pt = {
   col_album: "álbum",
   col_time: "duração",
   discover_for_you: "para você",
+  nav_narrow: "recolher menu",
+  nav_wide: "expandir menu",
 } as const
 
 const en: Record<keyof typeof pt, string> = {
@@ -1004,6 +1006,8 @@ const en: Record<keyof typeof pt, string> = {
   col_album: "album",
   col_time: "duration",
   discover_for_you: "for you",
+  nav_narrow: "collapse menu",
+  nav_wide: "expand menu",
 }
 
 export type Key = keyof typeof pt

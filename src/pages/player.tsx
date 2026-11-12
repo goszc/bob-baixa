@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
   Ellipsis,
   Heart,
+  Languages,
   Maximize2,
   Pause,
   Play,
@@ -12,6 +13,7 @@ import {
   SkipBack,
   SkipForward,
   Sparkles,
+  Timer,
   Volume2,
   VolumeX,
 } from "lucide-react"
@@ -159,11 +161,11 @@ export function Lyrics({ time, onFind, onKaraoke }: { time: number; onFind: () =
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       <div className="mb-2 flex items-center gap-2 px-3">
-        <button type="button" className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink" onClick={runTranslate}>
-          {t("lyrics_translate")}
+        <button type="button" aria-label={t("lyrics_translate")} title={t("lyrics_translate")} className="grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:bg-soft hover:text-ink" onClick={runTranslate}>
+          <Languages className="h-4 w-4" />
         </button>
-        <button type="button" className="rounded-full bg-soft px-3 py-1 text-[12px] text-muted hover:text-ink" onClick={() => track && nudgeLyrics(track.path, 0.5)}>
-          {t("lyrics_sync")}
+        <button type="button" aria-label={t("lyrics_sync")} title={t("lyrics_sync")} className="grid h-8 w-8 place-items-center rounded-full text-muted transition-colors hover:bg-soft hover:text-ink" onClick={() => track && nudgeLyrics(track.path, 0.5)}>
+          <Timer className="h-4 w-4" />
         </button>
         <button type="button" data-menu="lyrics-more" aria-label={t("lyrics_stage")} title={t("lyrics_stage")} className="ml-auto grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-soft hover:text-ink" onClick={() => setChrome({ lyrics: true })}>
           <Maximize2 className="h-4 w-4" />

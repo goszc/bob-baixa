@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { PanelRight, Quote } from "lucide-react"
+import { Heart, PanelRight, Quote } from "lucide-react"
 import { pressLyrics, togglePanel, useChrome } from "../lib/chrome"
 import { formatClock } from "../lib/format"
 import { trackKey } from "../lib/library"
@@ -76,10 +76,11 @@ export function NowPlaying() {
             type="button"
             aria-pressed={loved}
             aria-label={loved ? t("player_unlike") : t("player_like")}
-            className={loved ? "text-ink" : "text-muted"}
+            title={loved ? t("player_unlike") : t("player_like")}
+            className={cn("grid h-9 w-9 place-items-center rounded-full transition-colors hover:bg-soft", loved ? "text-ink" : "text-muted")}
             onClick={() => toggleLike(track.path)}
           >
-            ♥
+            <Heart className="h-4 w-4" fill={loved ? "currentColor" : "none"} />
           </button>
         ) : null}
         <div className="flex items-center gap-1">
